@@ -1,0 +1,4268 @@
+-- SECURITY NOTICE
+-- Built solely for security and monitoring malicious users.
+-- Unauthorized copying, bypassing, access, or redistribution is prohibited.
+-- credits: EXPSTOPER / xxmengi
+
+-- PLAYER MONITOR v3.3
+-- Features: Refresh, Spectate, ESP, Analytics,
+-- Glass UI, Animations, Dragging, Teleport,
+-- Inventory, Sessions, Animations, Outfits,
+-- Friends, World, Diagnostics, Server Tools
+
+-- SERVICES
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+local CoreGui = game:GetService("CoreGui")
+local HttpService = game:GetService("HttpService")
+local StarterGui = game:GetService("StarterGui")
+local Workspace = game:GetService("Workspace")
+local Lighting = game:GetService("Lighting")
+local TeleportService = game:GetService("TeleportService")
+
+-- CONFIG & UTILS
+local CONFIG = {
+	Colors = {
+		Background = Color3.fromRGB(18, 18, 24),
+		Surface = Color3.fromRGB(28, 28, 38),
+		SurfaceHover = Color3.fromRGB(38, 38, 52),
+		Accent = Color3.fromRGB(99, 102, 241),
+		AccentHover = Color3.fromRGB(129, 140, 248),
+		AccentGlow = Color3.fromRGB(139, 92, 246),
+		Danger = Color3.fromRGB(239, 68, 68),
+		Success = Color3.fromRGB(34, 197, 94),
+		Warning = Color3.fromRGB(245, 158, 11),
+		Info = Color3.fromRGB(56, 189, 248),
+		TextPrimary = Color3.fromRGB(248, 250, 252),
+		TextSecondary = Color3.fromRGB(203, 213, 225),
+		TextMuted = Color3.fromRGB(148, 163, 184),
+		Border = Color3.fromRGB(51, 65, 85),
+		BorderGlow = Color3.fromRGB(99, 102, 241),
+	},
+	Animations = {
+		Quick = TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		Standard = TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		Smooth = TweenInfo.new(0.35, Enum.EasingStyle.Cubic, Enum.EasingDirection.Out),
+		Bounce = TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+		Slow = TweenInfo.new(0.6, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
+	},
+	Sounds = {
+		Hover = "rbxassetid://9113083740",
+		Click = "rbxassetid://9113083710",
+		Success = "rbxassetid://9114488953",
+		Error = "rbxassetid://9114488953",
+	},
+}
+
+local function PlaySound(soundId, volume)
+	volume = volume or 0.3
+	pcall(function()
+		local sound = Instance.new("Sound")
+		sound.SoundId = soundId
+		sound.Volume = volume
+		sound.Parent = CoreGui
+		sound:Play()
+		game:GetService("Debris"):AddItem(sound, 1)
+	end)
+end
+
+local function Notify(title, message)
+	pcall(function()
+		StarterGui:SetCore("SendNotification", {
+			Title = title,
+			Text = message,
+			Duration = 3,
+		})
+	end)
+end
+
+local function Tween(object, properties, info)
+	if not object or not object.Parent then return nil end
+	info = info or CONFIG.Animations.Standard
+	local success, tween = pcall(function()
+		return TweenService:Create(object, info, properties)
+	end)
+	if success and tween then
+		tween:Play()
+		return tween
+	end
+	return nil
+end
+
+local function CreateCorner(parent, radius)
+	radius = radius or 8
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, radius)
+	corner.Parent = parent
+	return corner
+end
+
+local function CreateStroke(parent, color, thickness)
+	thickness = thickness or 1
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = color or CONFIG.Colors.Border
+	stroke.Thickness = thickness
+	stroke.Transparency = 0.5
+	stroke.Parent = parent
+	return stroke
+end
+
+local function CreateShadow(parent, transparency)
+	local shadow = Instance.new("ImageLabel")
+	shadow.Name = "Shadow"
+	shadow.AnchorPoint = Vector2.new(0.5, 0.5)
+	shadow.BackgroundTransparency = 1
+	shadow.Position = UDim2.new(0.5, 0, 0.5, 6)
+	shadow.Size = UDim2.new(1, 32, 1, 32)
+	shadow.ZIndex = parent.ZIndex - 1
+	shadow.Image = "rbxassetid://1316045217"
+	shadow.ImageColor3 = Color3.fromRGB(0, 0, 0)
+	shadow.ImageTransparency = transparency or 0.5
+	shadow.ScaleType = Enum.ScaleType.Slice
+	shadow.SliceCenter = Rect.new(10, 10, 118, 118)
+	shadow.Parent = parent
+	return shadow
+end
+
+local function CreateGradient(parent, color1, color2, rotation)
+	local gradient = Instance.new("UIGradient")
+	gradient.Color = ColorSequence.new(color1 or CONFIG.Colors.Accent, color2 or CONFIG.Colors.AccentGlow)
+	gradient.Rotation = rotation or 0
+	gradient.Parent = parent
+	return gradient
+end
+
+-- MAIN UI
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "PremiumPlayerMonitor_" .. HttpService:GenerateGUID(false)
+ScreenGui.ResetOnSpawn = false
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ScreenGui.Parent = CoreGui
+
+-- Remove ESP/glow objects left behind (so it wont be buggy)
+local function RemoveOrphanedVisuals()
+	for _, obj in ipairs(CoreGui:GetChildren()) do
+		if obj.Name == "PM_PremiumESP" or obj.Name == "PM_PremiumGlow" then
+			pcall(function() obj:Destroy() end)
+		end
+	end
+	for _, player in ipairs(Players:GetPlayers()) do
+		local char = player.Character
+		if char then
+			for _, obj in ipairs(char:GetChildren()) do
+				if obj.Name == "PM_PremiumGlow" then
+					pcall(function() obj:Destroy() end)
+				end
+			end
+		end
+	end
+end
+RemoveOrphanedVisuals()
+
+-- WINDOW
+State = {
+	SelectedPlayer = nil,
+	IsMinimized = false,
+	IsSpying = false,
+	SpyMode = "Follow",
+	SpyOrbitDistance = 15,
+	SpyOverlayEnabled = false,
+	SpyFov = 70,
+	TeleportTween = true,
+	FollowPlayer = false,
+	AutoRefresh = true,
+	ESP = false,
+	Highlight = false,
+	OriginalCamera = { Subject = nil, Type = Enum.CameraType.Custom, CFrame = nil, FieldOfView = 70 },
+	Connections = {},
+	ButtonCache = {},
+	ESPObjects = {},
+	HighlightObjects = {},
+}
+
+local MainFrame = Instance.new("Frame")
+MainFrame.Name = "MainFrame"
+MainFrame.Size = UDim2.new(0, 460, 0, 600)
+MainFrame.Position = UDim2.new(0.5, -230, 0.5, -300)
+MainFrame.BackgroundColor3 = CONFIG.Colors.Background
+MainFrame.BackgroundTransparency = 0.02
+MainFrame.BorderSizePixel = 0
+MainFrame.Active = true
+MainFrame.ClipsDescendants = true
+MainFrame.Parent = ScreenGui
+
+CreateCorner(MainFrame, 16)
+CreateStroke(MainFrame, CONFIG.Colors.Border, 1.5)
+CreateShadow(MainFrame, 0.45)
+
+-- BACKGROUND
+local MainGradient = Instance.new("UIGradient")
+MainGradient.Color = ColorSequence.new({
+	ColorSequenceKeypoint.new(0, Color3.fromRGB(18, 18, 24)),
+	ColorSequenceKeypoint.new(0.5, Color3.fromRGB(22, 20, 30)),
+	ColorSequenceKeypoint.new(1, Color3.fromRGB(18, 18, 24)),
+})
+MainGradient.Rotation = 45
+MainGradient.Parent = MainFrame
+
+-- TOP BAR
+local TopBar = Instance.new("Frame")
+TopBar.Name = "TopBar"
+TopBar.Size = UDim2.new(1, 0, 0, 52)
+TopBar.BackgroundColor3 = CONFIG.Colors.Surface
+TopBar.BorderSizePixel = 0
+TopBar.Parent = MainFrame
+
+CreateCorner(TopBar, 16)
+
+local TopBarFix = Instance.new("Frame")
+TopBarFix.Size = UDim2.new(1, 0, 0, 16)
+TopBarFix.Position = UDim2.new(0, 0, 1, -16)
+TopBarFix.BackgroundColor3 = CONFIG.Colors.Surface
+TopBarFix.BorderSizePixel = 0
+TopBarFix.Parent = TopBar
+
+-- ACCENT
+local TopBarAccent = Instance.new("Frame")
+TopBarAccent.Size = UDim2.new(1, 0, 0, 2)
+TopBarAccent.Position = UDim2.new(0, 0, 1, -2)
+TopBarAccent.BackgroundColor3 = CONFIG.Colors.Accent
+TopBarAccent.BorderSizePixel = 0
+TopBarAccent.Parent = TopBar
+CreateGradient(TopBarAccent, CONFIG.Colors.Accent, CONFIG.Colors.AccentGlow)
+
+-- TITLE
+local TitleLabel = Instance.new("TextLabel")
+TitleLabel.Name = "Title"
+TitleLabel.Size = UDim2.new(0, 200, 1, 0)
+TitleLabel.Position = UDim2.new(0, 18, 0, 0)
+TitleLabel.BackgroundTransparency = 1
+TitleLabel.Text = "PLAYER MONITOR"
+TitleLabel.Font = Enum.Font.GothamBold
+TitleLabel.TextSize = 18
+TitleLabel.TextColor3 = CONFIG.Colors.TextPrimary
+TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
+TitleLabel.Parent = TopBar
+
+-- TITLE ANIMATION
+local TitleGradient = Instance.new("UIGradient")
+TitleGradient.Color = ColorSequence.new({
+	ColorSequenceKeypoint.new(0, Color3.fromRGB(99, 102, 241)),
+	ColorSequenceKeypoint.new(0.5, Color3.fromRGB(236, 72, 153)),
+	ColorSequenceKeypoint.new(1, Color3.fromRGB(99, 102, 241)),
+})
+TitleGradient.Rotation = 0
+TitleGradient.Parent = TitleLabel
+
+local titleGradientConnection
+titleGradientConnection = task.spawn(function()
+	while true do
+		if not MainFrame or not MainFrame.Parent then break end
+		local tween = Tween(TitleGradient, { Offset = Vector2.new(1, 0) }, TweenInfo.new(3, Enum.EasingStyle.Linear))
+		if tween then
+			tween.Completed:Wait()
+		else
+			break
+		end
+		if not MainFrame or not MainFrame.Parent then break end
+		TitleGradient.Offset = Vector2.new(-1, 0)
+		local tween2 = Tween(TitleGradient, { Offset = Vector2.new(0, 0) }, TweenInfo.new(3, Enum.EasingStyle.Linear))
+		if tween2 then
+			tween2.Completed:Wait()
+		else
+			break
+		end
+	end
+end)
+
+-- PLAYER COUNT
+local CountBadge = Instance.new("Frame")
+CountBadge.Name = "CountBadge"
+CountBadge.Size = UDim2.new(0, 60, 0, 24)
+CountBadge.Position = UDim2.new(0, 215, 0.5, -12)
+CountBadge.BackgroundColor3 = CONFIG.Colors.Accent
+CountBadge.BorderSizePixel = 0
+CountBadge.Parent = TopBar
+
+CreateCorner(CountBadge, 12)
+CreateGradient(CountBadge, CONFIG.Colors.Accent, CONFIG.Colors.AccentGlow)
+
+local CountLabel = Instance.new("TextLabel")
+CountLabel.Name = "Count"
+CountLabel.Size = UDim2.new(1, 0, 1, 0)
+CountLabel.BackgroundTransparency = 1
+CountLabel.Text = "0/0"
+CountLabel.Font = Enum.Font.GothamBold
+CountLabel.TextSize = 12
+CountLabel.TextColor3 = CONFIG.Colors.TextPrimary
+CountLabel.Parent = CountBadge
+
+-- REFRESH TOGGLE
+local AutoRefreshBtn = Instance.new("TextButton")
+AutoRefreshBtn.Name = "AutoRefresh"
+AutoRefreshBtn.Size = UDim2.new(0, 30, 0, 30)
+AutoRefreshBtn.Position = UDim2.new(1, -118, 0.5, -15)
+AutoRefreshBtn.BackgroundColor3 = CONFIG.Colors.Success
+AutoRefreshBtn.Text = "🔃"
+AutoRefreshBtn.Font = Enum.Font.GothamBold
+AutoRefreshBtn.TextSize = 14
+AutoRefreshBtn.TextColor3 = CONFIG.Colors.TextPrimary
+AutoRefreshBtn.AutoButtonColor = false
+AutoRefreshBtn.Parent = TopBar
+CreateCorner(AutoRefreshBtn, 8)
+
+local MinimizeButton = Instance.new("TextButton")
+MinimizeButton.Name = "Minimize"
+MinimizeButton.Size = UDim2.new(0, 34, 0, 34)
+MinimizeButton.Position = UDim2.new(1, -80, 0.5, -17)
+MinimizeButton.BackgroundColor3 = CONFIG.Colors.SurfaceHover
+MinimizeButton.Text = ""
+MinimizeButton.AutoButtonColor = false
+MinimizeButton.Parent = TopBar
+
+CreateCorner(MinimizeButton, 10)
+
+local MinimizeIcon = Instance.new("TextLabel")
+MinimizeIcon.Size = UDim2.new(1, 0, 1, 0)
+MinimizeIcon.BackgroundTransparency = 1
+MinimizeIcon.Text = "−"
+MinimizeIcon.Font = Enum.Font.GothamBold
+MinimizeIcon.TextSize = 22
+MinimizeIcon.TextColor3 = CONFIG.Colors.TextSecondary
+MinimizeIcon.Parent = MinimizeButton
+
+local CloseButton = Instance.new("TextButton")
+CloseButton.Name = "Close"
+CloseButton.Size = UDim2.new(0, 34, 0, 34)
+CloseButton.Position = UDim2.new(1, -42, 0.5, -17)
+CloseButton.BackgroundColor3 = CONFIG.Colors.Danger
+CloseButton.BackgroundTransparency = 0.2
+CloseButton.Text = ""
+CloseButton.AutoButtonColor = false
+CloseButton.Parent = TopBar
+
+CreateCorner(CloseButton, 10)
+
+local CloseIcon = Instance.new("TextLabel")
+CloseIcon.Size = UDim2.new(1, 0, 1, 0)
+CloseIcon.BackgroundTransparency = 1
+CloseIcon.Text = "×"
+CloseIcon.Font = Enum.Font.GothamBold
+CloseIcon.TextSize = 24
+CloseIcon.TextColor3 = CONFIG.Colors.TextPrimary
+CloseIcon.Parent = CloseButton
+
+-- SEARCH
+local SearchContainer = Instance.new("Frame")
+SearchContainer.Name = "SearchContainer"
+SearchContainer.Size = UDim2.new(1, -28, 0, 42)
+SearchContainer.Position = UDim2.new(0, 14, 0, 64)
+SearchContainer.BackgroundColor3 = CONFIG.Colors.Surface
+SearchContainer.BorderSizePixel = 0
+SearchContainer.Parent = MainFrame
+
+CreateCorner(SearchContainer, 10)
+CreateStroke(SearchContainer, CONFIG.Colors.Border)
+
+local SearchIcon = Instance.new("ImageLabel")
+SearchIcon.Size = UDim2.new(0, 20, 0, 20)
+SearchIcon.Position = UDim2.new(0, 14, 0.5, -10)
+SearchIcon.BackgroundTransparency = 1
+SearchIcon.Image = "rbxassetid://7734052925"
+SearchIcon.ImageColor3 = CONFIG.Colors.TextMuted
+SearchIcon.Parent = SearchContainer
+
+local SearchBox = Instance.new("TextBox")
+SearchBox.Name = "SearchBox"
+SearchBox.Size = UDim2.new(1, -88, 1, 0)
+SearchBox.Position = UDim2.new(0, 40, 0, 0)
+SearchBox.BackgroundTransparency = 1
+SearchBox.Text = ""
+SearchBox.PlaceholderText = "Search players by name..."
+SearchBox.PlaceholderColor3 = CONFIG.Colors.TextMuted
+SearchBox.TextColor3 = CONFIG.Colors.TextPrimary
+SearchBox.Font = Enum.Font.Gotham
+SearchBox.TextSize = 14
+SearchBox.ClearTextOnFocus = false
+SearchBox.TextXAlignment = Enum.TextXAlignment.Left
+SearchBox.Parent = SearchContainer
+
+local ClearButton = Instance.new("TextButton")
+ClearButton.Name = "Clear"
+ClearButton.Size = UDim2.new(0, 26, 0, 26)
+ClearButton.Position = UDim2.new(1, -32, 0.5, -13)
+ClearButton.BackgroundTransparency = 1
+ClearButton.Text = "✕"
+ClearButton.Font = Enum.Font.GothamBold
+ClearButton.TextSize = 14
+ClearButton.TextColor3 = CONFIG.Colors.TextMuted
+ClearButton.Visible = false
+ClearButton.Parent = SearchContainer
+
+-- REFRESH BUTTON
+local RefreshBtn = Instance.new("TextButton")
+RefreshBtn.Name = "RefreshBtn"
+RefreshBtn.Size = UDim2.new(0, 30, 0, 30)
+RefreshBtn.Position = UDim2.new(1, -62, 0.5, -15)
+RefreshBtn.BackgroundColor3 = CONFIG.Colors.SurfaceHover
+RefreshBtn.Text = "🔃"
+RefreshBtn.Font = Enum.Font.GothamBold
+RefreshBtn.TextSize = 14
+RefreshBtn.TextColor3 = CONFIG.Colors.TextSecondary
+RefreshBtn.AutoButtonColor = false
+RefreshBtn.Parent = SearchContainer
+CreateCorner(RefreshBtn, 8)
+
+-- PLAYER LIST
+local ListContainer = Instance.new("Frame")
+ListContainer.Name = "ListContainer"
+ListContainer.Size = UDim2.new(1, -28, 0, 360)
+ListContainer.Position = UDim2.new(0, 14, 0, 116)
+ListContainer.BackgroundColor3 = CONFIG.Colors.Surface
+ListContainer.BorderSizePixel = 0
+ListContainer.ClipsDescendants = true
+ListContainer.Parent = MainFrame
+
+CreateCorner(ListContainer, 10)
+CreateStroke(ListContainer, CONFIG.Colors.Border)
+
+local PlayerList = Instance.new("ScrollingFrame")
+PlayerList.Name = "PlayerList"
+PlayerList.Size = UDim2.new(1, -10, 1, -10)
+PlayerList.Position = UDim2.new(0, 5, 0, 5)
+PlayerList.BackgroundTransparency = 1
+PlayerList.BorderSizePixel = 0
+PlayerList.ScrollBarThickness = 5
+PlayerList.ScrollBarImageColor3 = CONFIG.Colors.Accent
+PlayerList.ScrollBarImageTransparency = 0.3
+PlayerList.CanvasSize = UDim2.new(0, 0, 0, 0)
+PlayerList.AutomaticCanvasSize = Enum.AutomaticSize.Y
+PlayerList.Parent = ListContainer
+
+local ListLayout = Instance.new("UIListLayout")
+ListLayout.Padding = UDim.new(0, 5)
+ListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+ListLayout.Parent = PlayerList
+
+local ListPadding = Instance.new("UIPadding")
+ListPadding.PaddingTop = UDim.new(0, 5)
+ListPadding.PaddingBottom = UDim.new(0, 5)
+ListPadding.PaddingLeft = UDim.new(0, 5)
+ListPadding.PaddingRight = UDim.new(0, 5)
+ListPadding.Parent = PlayerList
+
+-- EMPTY STATE
+local EmptyState = Instance.new("TextLabel")
+EmptyState.Name = "EmptyState"
+EmptyState.Size = UDim2.new(1, 0, 1, 0)
+EmptyState.BackgroundTransparency = 1
+EmptyState.Text = "No players found"
+EmptyState.Font = Enum.Font.Gotham
+EmptyState.TextSize = 14
+EmptyState.TextColor3 = CONFIG.Colors.TextMuted
+EmptyState.Visible = false
+EmptyState.Parent = PlayerList
+
+-- INFO BAR
+local InfoBar = Instance.new("Frame")
+InfoBar.Name = "InfoBar"
+InfoBar.Size = UDim2.new(1, -28, 0, 34)
+InfoBar.Position = UDim2.new(0, 14, 1, -48)
+InfoBar.BackgroundColor3 = CONFIG.Colors.Surface
+InfoBar.BorderSizePixel = 0
+InfoBar.Parent = MainFrame
+
+CreateCorner(InfoBar, 10)
+
+local InfoLabel = Instance.new("TextLabel")
+InfoLabel.Name = "Info"
+InfoLabel.Size = UDim2.new(1, -14, 1, 0)
+InfoLabel.Position = UDim2.new(0, 14, 0, 0)
+InfoLabel.BackgroundTransparency = 1
+InfoLabel.Text = "Select a player to view actions"
+InfoLabel.Font = Enum.Font.Gotham
+InfoLabel.TextSize = 12
+InfoLabel.TextColor3 = CONFIG.Colors.TextMuted
+InfoLabel.TextXAlignment = Enum.TextXAlignment.Left
+InfoLabel.Parent = InfoBar
+
+-- TABS
+local TabBar = Instance.new("Frame")
+TabBar.Name = "TabBar"
+TabBar.Size = UDim2.new(1, -28, 0, 36)
+TabBar.Position = UDim2.new(0, 14, 0, 60)
+TabBar.BackgroundColor3 = CONFIG.Colors.Surface
+TabBar.BorderSizePixel = 0
+TabBar.Parent = MainFrame
+CreateCorner(TabBar, 10)
+CreateStroke(TabBar, CONFIG.Colors.Border)
+
+local MainTabButton = Instance.new("TextButton")
+MainTabButton.Name = "MainTab"
+MainTabButton.Size = UDim2.new(0.25, -4, 1, -6)
+MainTabButton.Position = UDim2.new(0, 3, 0, 3)
+MainTabButton.BackgroundColor3 = CONFIG.Colors.Accent
+MainTabButton.Text = "Main"
+MainTabButton.Font = Enum.Font.GothamBold
+MainTabButton.TextSize = 12
+MainTabButton.TextColor3 = CONFIG.Colors.TextPrimary
+MainTabButton.AutoButtonColor = false
+MainTabButton.Parent = TabBar
+CreateCorner(MainTabButton, 8)
+CreateGradient(MainTabButton, CONFIG.Colors.Accent, CONFIG.Colors.AccentGlow)
+
+local NewTabButton = Instance.new("TextButton")
+NewTabButton.Name = "NewTab"
+NewTabButton.Size = UDim2.new(0.25, -4, 1, -6)
+NewTabButton.Position = UDim2.new(0.25, 1, 0, 3)
+NewTabButton.BackgroundColor3 = CONFIG.Colors.Background
+NewTabButton.Text = "Tools"
+NewTabButton.Font = Enum.Font.GothamBold
+NewTabButton.TextSize = 12
+NewTabButton.TextColor3 = CONFIG.Colors.TextSecondary
+NewTabButton.AutoButtonColor = false
+NewTabButton.Parent = TabBar
+CreateCorner(NewTabButton, 8)
+
+local WorldTabButton = Instance.new("TextButton")
+WorldTabButton.Name = "WorldTab"
+WorldTabButton.Size = UDim2.new(0.25, -4, 1, -6)
+WorldTabButton.Position = UDim2.new(0.5, 1, 0, 3)
+WorldTabButton.BackgroundColor3 = CONFIG.Colors.Background
+WorldTabButton.Text = "World"
+WorldTabButton.Font = Enum.Font.GothamBold
+WorldTabButton.TextSize = 12
+WorldTabButton.TextColor3 = CONFIG.Colors.TextSecondary
+WorldTabButton.AutoButtonColor = false
+WorldTabButton.Parent = TabBar
+CreateCorner(WorldTabButton, 8)
+
+local DiagnosticsTabButton = Instance.new("TextButton")
+DiagnosticsTabButton.Name = "DiagnosticsTab"
+DiagnosticsTabButton.Size = UDim2.new(0.25, -4, 1, -6)
+DiagnosticsTabButton.Position = UDim2.new(0.75, 1, 0, 3)
+DiagnosticsTabButton.BackgroundColor3 = CONFIG.Colors.Background
+DiagnosticsTabButton.Text = "Diagnostics"
+DiagnosticsTabButton.Font = Enum.Font.GothamBold
+DiagnosticsTabButton.TextSize = 11
+DiagnosticsTabButton.TextColor3 = CONFIG.Colors.TextSecondary
+DiagnosticsTabButton.AutoButtonColor = false
+DiagnosticsTabButton.Parent = TabBar
+CreateCorner(DiagnosticsTabButton, 8)
+
+local MainPage = Instance.new("Frame")
+MainPage.Name = "MainPage"
+MainPage.Size = UDim2.new(1, 0, 1, -104)
+MainPage.Position = UDim2.new(0, 0, 0, 104)
+MainPage.BackgroundTransparency = 1
+MainPage.ClipsDescendants = true
+MainPage.Parent = MainFrame
+
+local NewPage = Instance.new("Frame")
+NewPage.Name = "NewPage"
+NewPage.Size = MainPage.Size
+NewPage.Position = MainPage.Position
+NewPage.BackgroundTransparency = 1
+NewPage.Visible = false
+NewPage.ClipsDescendants = true
+NewPage.Parent = MainFrame
+
+local WorldPage = Instance.new("Frame")
+WorldPage.Name = "WorldPage"
+WorldPage.Size = MainPage.Size
+WorldPage.Position = MainPage.Position
+WorldPage.BackgroundTransparency = 1
+WorldPage.Visible = false
+WorldPage.ClipsDescendants = true
+WorldPage.Parent = MainFrame
+
+local DiagnosticsPage = Instance.new("Frame")
+DiagnosticsPage.Name = "DiagnosticsPage"
+DiagnosticsPage.Size = MainPage.Size
+DiagnosticsPage.Position = MainPage.Position
+DiagnosticsPage.BackgroundTransparency = 1
+DiagnosticsPage.Visible = false
+DiagnosticsPage.ClipsDescendants = true
+DiagnosticsPage.Parent = MainFrame
+
+-- WORLD DATA
+;(function()
+	local Header = Instance.new("Frame")
+	Header.Size = UDim2.new(1, -28, 0, 58)
+	Header.Position = UDim2.new(0, 14, 0, 8)
+	Header.BackgroundColor3 = CONFIG.Colors.Surface
+	Header.BorderSizePixel = 0
+	Header.Parent = WorldPage
+	CreateCorner(Header, 12)
+	CreateStroke(Header, CONFIG.Colors.Border)
+
+	local Title = Instance.new("TextLabel")
+	Title.Size = UDim2.new(1, -120, 0, 24)
+	Title.Position = UDim2.new(0, 18, 0, 8)
+	Title.BackgroundTransparency = 1
+	Title.Text = "WORLD INSPECTOR"
+	Title.Font = Enum.Font.GothamBold
+	Title.TextSize = 16
+	Title.TextColor3 = CONFIG.Colors.TextPrimary
+	Title.TextXAlignment = Enum.TextXAlignment.Left
+	Title.Parent = Header
+
+	local Sub = Instance.new("TextLabel")
+	Sub.Size = UDim2.new(1, -120, 0, 16)
+	Sub.Position = UDim2.new(0, 18, 0, 31)
+	Sub.BackgroundTransparency = 1
+	Sub.Text = "Live environment values and workspace diagnostics"
+	Sub.Font = Enum.Font.Gotham
+	Sub.TextSize = 10
+	Sub.TextColor3 = CONFIG.Colors.TextMuted
+	Sub.TextXAlignment = Enum.TextXAlignment.Left
+	Sub.Parent = Header
+
+	local Refresh = Instance.new("TextButton")
+	Refresh.Size = UDim2.new(0, 82, 0, 30)
+	Refresh.Position = UDim2.new(1, -94, 0.5, -15)
+	Refresh.BackgroundColor3 = CONFIG.Colors.Accent
+	Refresh.BorderSizePixel = 0
+	Refresh.Text = "REFRESH"
+	Refresh.Font = Enum.Font.GothamBold
+	Refresh.TextSize = 9
+	Refresh.TextColor3 = CONFIG.Colors.TextPrimary
+	Refresh.AutoButtonColor = false
+	Refresh.Parent = Header
+	CreateCorner(Refresh, 8)
+
+	local Scroll = Instance.new("ScrollingFrame")
+	Scroll.Name = "WorldScroll"
+	Scroll.Size = UDim2.new(1, -28, 1, -78)
+	Scroll.Position = UDim2.new(0, 14, 0, 70)
+	Scroll.BackgroundTransparency = 1
+	Scroll.BorderSizePixel = 0
+	Scroll.ScrollBarThickness = 4
+	Scroll.ScrollBarImageColor3 = CONFIG.Colors.Accent
+	Scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+	Scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	Scroll.Parent = WorldPage
+
+	local Grid = Instance.new("UIGridLayout")
+	Grid.CellSize = UDim2.new(0.48, 0, 0, 58)
+	Grid.CellPadding = UDim2.new(0.04, 0, 0, 8)
+	Grid.SortOrder = Enum.SortOrder.LayoutOrder
+	Grid.Parent = Scroll
+
+	local function Card(name, value, accent)
+		local card = Instance.new("Frame")
+		card.Name = name
+		card.BackgroundColor3 = CONFIG.Colors.Surface
+		card.BorderSizePixel = 0
+		CreateCorner(card, 10)
+		CreateStroke(card, CONFIG.Colors.Border)
+
+		local label = Instance.new("TextLabel")
+		label.Size = UDim2.new(1, -20, 0, 17)
+		label.Position = UDim2.new(0, 10, 0, 7)
+		label.BackgroundTransparency = 1
+		label.Text = name
+		label.Font = Enum.Font.Gotham
+		label.TextSize = 9
+		label.TextColor3 = CONFIG.Colors.TextMuted
+		label.TextXAlignment = Enum.TextXAlignment.Left
+		label.Parent = card
+
+		local val = Instance.new("TextLabel")
+		val.Name = "Value"
+		val.Size = UDim2.new(1, -20, 0, 25)
+		val.Position = UDim2.new(0, 10, 0, 25)
+		val.BackgroundTransparency = 1
+		val.Text = value
+		val.Font = Enum.Font.GothamBold
+		val.TextSize = 12
+		val.TextColor3 = accent or CONFIG.Colors.TextPrimary
+		val.TextXAlignment = Enum.TextXAlignment.Left
+		val.TextTruncate = Enum.TextTruncate.AtEnd
+		val.Parent = card
+		card.Parent = Scroll
+		return val
+	end
+
+	local WorldValues = {
+		Gravity = Card("Gravity", "--", CONFIG.Colors.Info),
+		Clock = Card("Lighting ClockTime", "--", CONFIG.Colors.Warning),
+		Brightness = Card("Brightness", "--", CONFIG.Colors.Warning),
+		Ambient = Card("Ambient", "--", CONFIG.Colors.Accent),
+		Outdoor = Card("Outdoor Ambient", "--", CONFIG.Colors.Accent),
+		Atmosphere = Card("Atmosphere", "None", CONFIG.Colors.Info),
+		Parts = Card("Workspace Instances", "--", CONFIG.Colors.Success),
+		Terrain = Card("Terrain Water", "--", CONFIG.Colors.Info),
+		Place = Card("Place / Job", "--", CONFIG.Colors.TextPrimary),
+		Camera = Card("Camera FOV", "--", CONFIG.Colors.Info),
+	}
+
+	local function UpdateWorld()
+		local atmosphere = Lighting:FindFirstChildOfClass("Atmosphere")
+		WorldValues.Gravity.Text = string.format("%.2f studs/s²", Workspace.Gravity)
+		WorldValues.Clock.Text = string.format("%.2f", Lighting.ClockTime)
+		WorldValues.Brightness.Text = string.format("%.2f", Lighting.Brightness)
+		WorldValues.Ambient.Text = string.format("%d, %d, %d", math.floor(Lighting.Ambient.R * 255 + 0.5), math.floor(Lighting.Ambient.G * 255 + 0.5), math.floor(Lighting.Ambient.B * 255 + 0.5))
+		WorldValues.Outdoor.Text = string.format("%d, %d, %d", math.floor(Lighting.OutdoorAmbient.R * 255 + 0.5), math.floor(Lighting.OutdoorAmbient.G * 255 + 0.5), math.floor(Lighting.OutdoorAmbient.B * 255 + 0.5))
+		WorldValues.Atmosphere.Text = atmosphere and string.format("Density %.3f", atmosphere.Density) or "None"
+		WorldValues.Parts.Text = tostring(#Workspace:GetDescendants())
+		WorldValues.Terrain.Text = Workspace.Terrain.WaterWaveSize > 0 and "Enabled" or "Low / Off"
+		WorldValues.Place.Text = string.format("%d / %s", game.PlaceId, string.sub(game.JobId, 1, 8))
+		local camera = Workspace.CurrentCamera
+		WorldValues.Camera.Text = camera and string.format("%.1f°", camera.FieldOfView) or "None"
+	end
+
+	Refresh.MouseButton1Click:Connect(function()
+		UpdateWorld()
+		PlaySound(CONFIG.Sounds.Success, 0.15)
+	end)
+	UpdateWorld()
+	task.spawn(function()
+		while WorldPage.Parent do
+			if WorldPage.Visible then UpdateWorld() end
+			task.wait(1)
+		end
+	end)
+end)()
+
+-- CLIENT DATA
+;(function()
+	local Header = Instance.new("Frame")
+	Header.Size = UDim2.new(1, -28, 0, 58)
+	Header.Position = UDim2.new(0, 14, 0, 8)
+	Header.BackgroundColor3 = CONFIG.Colors.Surface
+	Header.BorderSizePixel = 0
+	Header.Parent = DiagnosticsPage
+	CreateCorner(Header, 12)
+	CreateStroke(Header, CONFIG.Colors.Border)
+
+	local Title = Instance.new("TextLabel")
+	Title.Size = UDim2.new(1, -20, 0, 24)
+	Title.Position = UDim2.new(0, 18, 0, 8)
+	Title.BackgroundTransparency = 1
+	Title.Text = "CLIENT DIAGNOSTICS"
+	Title.Font = Enum.Font.GothamBold
+	Title.TextSize = 16
+	Title.TextColor3 = CONFIG.Colors.TextPrimary
+	Title.TextXAlignment = Enum.TextXAlignment.Left
+	Title.Parent = Header
+
+	local Sub = Instance.new("TextLabel")
+	Sub.Size = UDim2.new(1, -20, 0, 16)
+	Sub.Position = UDim2.new(0, 18, 0, 31)
+	Sub.BackgroundTransparency = 1
+	Sub.Text = "Runtime, memory, input and render diagnostics"
+	Sub.Font = Enum.Font.Gotham
+	Sub.TextSize = 10
+	Sub.TextColor3 = CONFIG.Colors.TextMuted
+	Sub.TextXAlignment = Enum.TextXAlignment.Left
+	Sub.Parent = Header
+
+	local Scroll = Instance.new("ScrollingFrame")
+	Scroll.Size = UDim2.new(1, -28, 1, -78)
+	Scroll.Position = UDim2.new(0, 14, 0, 70)
+	Scroll.BackgroundTransparency = 1
+	Scroll.BorderSizePixel = 0
+	Scroll.ScrollBarThickness = 4
+	Scroll.ScrollBarImageColor3 = CONFIG.Colors.Accent
+	Scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	Scroll.Parent = DiagnosticsPage
+
+	local Grid = Instance.new("UIGridLayout")
+	Grid.CellSize = UDim2.new(0.48, 0, 0, 58)
+	Grid.CellPadding = UDim2.new(0.04, 0, 0, 8)
+	Grid.Parent = Scroll
+
+	local function Card(name, value, accent)
+		local card = Instance.new("Frame")
+		card.BackgroundColor3 = CONFIG.Colors.Surface
+		card.BorderSizePixel = 0
+		CreateCorner(card, 10)
+		CreateStroke(card, CONFIG.Colors.Border)
+		local label = Instance.new("TextLabel")
+		label.Size = UDim2.new(1, -20, 0, 17)
+		label.Position = UDim2.new(0, 10, 0, 7)
+		label.BackgroundTransparency = 1
+		label.Text = name
+		label.Font = Enum.Font.Gotham
+		label.TextSize = 9
+		label.TextColor3 = CONFIG.Colors.TextMuted
+		label.TextXAlignment = Enum.TextXAlignment.Left
+		label.Parent = card
+		local val = Instance.new("TextLabel")
+		val.Name = "Value"
+		val.Size = UDim2.new(1, -20, 0, 25)
+		val.Position = UDim2.new(0, 10, 0, 25)
+		val.BackgroundTransparency = 1
+		val.Text = value
+		val.Font = Enum.Font.GothamBold
+		val.TextSize = 12
+		val.TextColor3 = accent or CONFIG.Colors.TextPrimary
+		val.TextXAlignment = Enum.TextXAlignment.Left
+		val.TextTruncate = Enum.TextTruncate.AtEnd
+		val.Parent = card
+		card.Parent = Scroll
+		return val
+	end
+
+	local Values = {
+		Memory = Card("Lua Memory", "--", CONFIG.Colors.Info),
+		Heartbeat = Card("Heartbeat Step", "--", CONFIG.Colors.Success),
+		Render = Card("Render FPS", "--", CONFIG.Colors.Accent),
+		Ping = Card("Network Ping", "--", CONFIG.Colors.Warning),
+		FOV = Card("Camera FOV", "--", CONFIG.Colors.Info),
+		Viewport = Card("Viewport", "--", CONFIG.Colors.TextPrimary),
+		Mouse = Card("Mouse Position", "--", CONFIG.Colors.TextPrimary),
+		Touch = Card("Touch Enabled", "--", CONFIG.Colors.Info),
+		Keyboard = Card("Keyboard Enabled", "--", CONFIG.Colors.Success),
+		Streaming = Card("Streaming Enabled", "--", CONFIG.Colors.Warning),
+	}
+
+	local StatsService = game:GetService("Stats")
+	local frames, elapsed = 0, 0
+	local lastHeartbeat = 0
+
+	RunService.RenderStepped:Connect(function(dt)
+		frames += 1
+		elapsed += dt
+		if elapsed >= 0.5 then
+			Values.Render.Text = string.format("%d FPS", math.floor(frames / elapsed + 0.5))
+			frames, elapsed = 0, 0
+		end
+	end)
+
+	RunService.Heartbeat:Connect(function(dt)
+		lastHeartbeat = dt
+	end)
+
+	local function UpdateDiagnostics()
+		local memory = 0
+		pcall(function() memory = StatsService:GetTotalMemoryUsageMb() end)
+		Values.Memory.Text = string.format("%.1f MB", memory)
+		Values.Heartbeat.Text = string.format("%.2f ms", lastHeartbeat * 1000)
+		local ping = 0
+		pcall(function() ping = math.floor(StatsService.Network.ServerStatsItem["Data Ping"]:GetValue()) end)
+		Values.Ping.Text = string.format("%d ms", ping)
+		local camera = Workspace.CurrentCamera
+		Values.FOV.Text = camera and string.format("%.1f°", camera.FieldOfView) or "None"
+		if camera then
+			local v = camera.ViewportSize
+			Values.Viewport.Text = string.format("%d × %d", math.floor(v.X), math.floor(v.Y))
+		end
+		local mouse = UserInputService:GetMouseLocation()
+		Values.Mouse.Text = string.format("%d, %d", math.floor(mouse.X), math.floor(mouse.Y))
+		Values.Touch.Text = UserInputService.TouchEnabled and "Yes" or "No"
+		Values.Keyboard.Text = UserInputService.KeyboardEnabled and "Yes" or "No"
+		Values.Streaming.Text = Workspace.StreamingEnabled and "Enabled" or "Disabled"
+	end
+
+	task.spawn(function()
+		while DiagnosticsPage.Parent do
+			if DiagnosticsPage.Visible then UpdateDiagnostics() end
+			task.wait(0.5)
+		end
+	end)
+	UpdateDiagnostics()
+end)()
+
+-- SCRIPT HUB
+;(function()
+	NewPage.Name = "ScriptHubPage"
+
+	local Hub = Instance.new("Frame")
+	Hub.Name = "ScriptHub"
+	Hub.Size = UDim2.new(1, 0, 1, 0)
+	Hub.BackgroundTransparency = 1
+	Hub.Parent = NewPage
+
+	local function Corner(obj, radius)
+		local c = Instance.new("UICorner")
+		c.CornerRadius = UDim.new(0, radius)
+		c.Parent = obj
+	end
+
+	-- Simple header
+	local Header = Instance.new("Frame")
+	Header.Name = "ScriptHubHeader"
+	Header.Size = UDim2.new(1, -28, 0, 58)
+	Header.Position = UDim2.new(0, 14, 0, 8)
+	Header.BackgroundColor3 = CONFIG.Colors.Surface
+	Header.BorderSizePixel = 0
+	Header.Parent = Hub
+	Corner(Header, 12)
+	CreateStroke(Header, CONFIG.Colors.Border)
+
+	local HeaderAccent = Instance.new("Frame")
+	HeaderAccent.Size = UDim2.new(0, 4, 1, -18)
+	HeaderAccent.Position = UDim2.new(0, 10, 0, 9)
+	HeaderAccent.BackgroundColor3 = CONFIG.Colors.Accent
+	HeaderAccent.BorderSizePixel = 0
+	HeaderAccent.Parent = Header
+	Corner(HeaderAccent, 3)
+
+	local HubTitle = Instance.new("TextLabel")
+	HubTitle.Size = UDim2.new(1, -130, 0, 24)
+	HubTitle.Position = UDim2.new(0, 26, 0, 8)
+	HubTitle.BackgroundTransparency = 1
+	HubTitle.Text = "TOOLS + SCRIPT HUB"
+	HubTitle.Font = Enum.Font.GothamBold
+	HubTitle.TextSize = 16
+	HubTitle.TextColor3 = CONFIG.Colors.TextPrimary
+	HubTitle.TextXAlignment = Enum.TextXAlignment.Left
+	HubTitle.Parent = Header
+
+	local HubSub = Instance.new("TextLabel")
+	HubSub.Size = UDim2.new(1, -130, 0, 16)
+	HubSub.Position = UDim2.new(0, 26, 0, 31)
+	HubSub.BackgroundTransparency = 1
+	HubSub.Text = "Utilities, server tools, live stats & scripts"
+	HubSub.Font = Enum.Font.Gotham
+	HubSub.TextSize = 10
+	HubSub.TextColor3 = CONFIG.Colors.TextMuted
+	HubSub.TextXAlignment = Enum.TextXAlignment.Left
+	HubSub.Parent = Header
+
+	local Online = Instance.new("TextLabel")
+	Online.Size = UDim2.new(0, 82, 0, 26)
+	Online.Position = UDim2.new(1, -94, 0.5, -13)
+	Online.BackgroundColor3 = CONFIG.Colors.Success
+	Online.BackgroundTransparency = 0.15
+	Online.BorderSizePixel = 0
+	Online.Text = "● ONLINE"
+	Online.Font = Enum.Font.GothamBold
+	Online.TextSize = 9
+	Online.TextColor3 = CONFIG.Colors.TextPrimary
+	Online.Parent = Header
+	Corner(Online, 8)
+
+	-- QUICK TOOLS
+	local QuickBar = Instance.new("Frame")
+	QuickBar.Name = "QuickTools"
+	QuickBar.Size = UDim2.new(1, -28, 0, 32)
+	QuickBar.Position = UDim2.new(0, 14, 0, 70)
+	QuickBar.BackgroundColor3 = CONFIG.Colors.Surface
+	QuickBar.BorderSizePixel = 0
+	QuickBar.Parent = Hub
+	Corner(QuickBar, 10)
+	CreateStroke(QuickBar, CONFIG.Colors.Border)
+
+	local QuickLayout = Instance.new("UIGridLayout")
+	QuickLayout.CellSize = UDim2.new(0.25, -6, 1, -6)
+	QuickLayout.CellPadding = UDim2.new(0, 6, 0, 0)
+	QuickLayout.FillDirection = Enum.FillDirection.Horizontal
+	QuickLayout.Parent = QuickBar
+
+	local function QuickButton(text, color)
+		local b = Instance.new("TextButton")
+		b.BackgroundColor3 = color or CONFIG.Colors.Background
+		b.BorderSizePixel = 0
+		b.Text = text
+		b.Font = Enum.Font.GothamBold
+		b.TextSize = 9
+		b.TextColor3 = CONFIG.Colors.TextPrimary
+		b.AutoButtonColor = false
+		b.Parent = QuickBar
+		Corner(b, 8)
+		return b
+	end
+
+	local CopyJobButton = QuickButton("COPY JOB ID", CONFIG.Colors.Background)
+	local CopyPlaceButton = QuickButton("COPY PLACE ID", CONFIG.Colors.Background)
+	local RejoinToolButton = QuickButton("REJOIN", CONFIG.Colors.Success)
+	local ResetUIButton = QuickButton("RESET UI", CONFIG.Colors.Accent)
+
+	HubSub.Text = "Players: --   •   FPS: --   •   Ping: --   •   Time: --:--:--"
+
+	local StatsService = game:GetService("Stats")
+	local fpsFrames = 0
+	local fpsElapsed = 0
+	local currentFPS = 60
+
+	local function GetPing()
+		local ok, value = pcall(function()
+			local item = StatsService.Network.ServerStatsItem["Data Ping"]
+			return math.floor(item:GetValue())
+		end)
+		return ok and value or 0
+	end
+
+	local function UpdateLiveStats(dt)
+		fpsFrames += 1
+		fpsElapsed += dt
+		if fpsElapsed >= 0.5 then
+			currentFPS = math.floor(fpsFrames / fpsElapsed + 0.5)
+			fpsFrames = 0
+			fpsElapsed = 0
+		end
+		HubSub.Text = string.format("Players: %d   •   FPS: %d   •   Ping: %dms   •   Time: %s", #Players:GetPlayers(), currentFPS, GetPing(), os.date("%H:%M:%S"))
+	end
+
+	task.spawn(function()
+		while Hub.Parent do
+			local dt = RunService.RenderStepped:Wait()
+			UpdateLiveStats(dt)
+		end
+	end)
+
+	local function CopyText(button, text)
+		local ok = pcall(function() setclipboard(tostring(text)) end)
+		if ok then
+			local old = button.Text
+			button.Text = "COPIED!"
+			button.BackgroundColor3 = CONFIG.Colors.Success
+			PlaySound(CONFIG.Sounds.Success, 0.2)
+			task.delay(1, function()
+				if button and button.Parent then
+					button.Text = old
+					button.BackgroundColor3 = CONFIG.Colors.Background
+				end
+			end)
+		end
+	end
+
+	CopyJobButton.MouseButton1Click:Connect(function()
+		CopyText(CopyJobButton, game.JobId)
+	end)
+
+	CopyPlaceButton.MouseButton1Click:Connect(function()
+		CopyText(CopyPlaceButton, game.PlaceId)
+	end)
+
+	RejoinToolButton.MouseButton1Click:Connect(function()
+		PlaySound(CONFIG.Sounds.Click, 0.2)
+		pcall(function() TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer) end)
+	end)
+
+	ResetUIButton.MouseButton1Click:Connect(function()
+		PlaySound(CONFIG.Sounds.Click, 0.2)
+		MainFrame.Size = UDim2.new(0, 460, 0, 600)
+		MainFrame.Position = UDim2.new(0.5, -230, 0.5, -300)
+		MainFrame.Visible = true
+		State.IsMinimized = false
+	end)
+
+	-- Layout
+	local List = Instance.new("ScrollingFrame")
+	List.Name = "ScriptList"
+	List.Size = UDim2.new(1, -28, 1, -116)
+	List.Position = UDim2.new(0, 14, 0, 108)
+	List.BackgroundColor3 = CONFIG.Colors.Surface
+	List.BorderSizePixel = 0
+	List.ScrollBarThickness = 4
+	List.ScrollBarImageColor3 = CONFIG.Colors.Accent
+	List.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	List.CanvasSize = UDim2.new()
+	List.Parent = Hub
+	Corner(List, 12)
+	CreateStroke(List, CONFIG.Colors.Border)
+
+	local Layout = Instance.new("UIListLayout")
+	Layout.Padding = UDim.new(0, 6)
+	Layout.SortOrder = Enum.SortOrder.LayoutOrder
+	Layout.Parent = List
+
+	local Padding = Instance.new("UIPadding")
+	Padding.PaddingTop = UDim.new(0, 8)
+	Padding.PaddingBottom = UDim.new(0, 8)
+	Padding.PaddingLeft = UDim.new(0, 8)
+	Padding.PaddingRight = UDim.new(0, 8)
+	Padding.Parent = List
+
+	local function CreateCard(order, icon, color, name, description, url, asyncLoad)
+		local Card = Instance.new("Frame")
+		Card.Name = name:gsub("%s+", "")
+		Card.LayoutOrder = order
+		Card.Size = UDim2.new(1, 0, 0, 64)
+		Card.BackgroundColor3 = CONFIG.Colors.Background
+		Card.BorderSizePixel = 0
+		Card.Parent = List
+		Corner(Card, 10)
+
+		local Icon = Instance.new("TextLabel")
+		Icon.Size = UDim2.new(0, 42, 0, 42)
+		Icon.Position = UDim2.new(0, 10, 0.5, -21)
+		Icon.BackgroundColor3 = color
+		Icon.BorderSizePixel = 0
+		Icon.Text = icon
+		Icon.Font = Enum.Font.GothamBold
+		Icon.TextSize = 19
+		Icon.TextColor3 = CONFIG.Colors.TextPrimary
+		Icon.Parent = Card
+		Corner(Icon, 10)
+
+		local Name = Instance.new("TextLabel")
+		Name.Size = UDim2.new(1, -135, 0, 21)
+		Name.Position = UDim2.new(0, 64, 0, 9)
+		Name.BackgroundTransparency = 1
+		Name.Text = name
+		Name.Font = Enum.Font.GothamBold
+		Name.TextSize = 12
+		Name.TextColor3 = CONFIG.Colors.TextPrimary
+		Name.TextXAlignment = Enum.TextXAlignment.Left
+		Name.Parent = Card
+
+		local Desc = Instance.new("TextLabel")
+		Desc.Size = UDim2.new(1, -135, 0, 20)
+		Desc.Position = UDim2.new(0, 64, 0, 31)
+		Desc.BackgroundTransparency = 1
+		Desc.Text = description
+		Desc.Font = Enum.Font.Gotham
+		Desc.TextSize = 9
+		Desc.TextColor3 = CONFIG.Colors.TextMuted
+		Desc.TextXAlignment = Enum.TextXAlignment.Left
+		Desc.TextTruncate = Enum.TextTruncate.AtEnd
+		Desc.Parent = Card
+
+		local Run = Instance.new("TextButton")
+		Run.Size = UDim2.new(0, 58, 0, 32)
+		Run.Position = UDim2.new(1, -68, 0.5, -16)
+		Run.BackgroundColor3 = color
+		Run.BorderSizePixel = 0
+		Run.Text = "RUN"
+		Run.Font = Enum.Font.GothamBold
+		Run.TextSize = 10
+		Run.TextColor3 = CONFIG.Colors.TextPrimary
+		Run.AutoButtonColor = false
+		Run.Parent = Card
+		Corner(Run, 9)
+
+		local busy = false
+		Card.MouseEnter:Connect(function()
+			if not busy then
+				Tween(Card, {BackgroundColor3 = CONFIG.Colors.SurfaceHover}, CONFIG.Animations.Quick)
+				Tween(Icon, {Size = UDim2.new(0, 46, 0, 46), Position = UDim2.new(0, 8, 0.5, -23)}, CONFIG.Animations.Quick)
+			end
+		end)
+		Card.MouseLeave:Connect(function()
+			if not busy then
+				Tween(Card, {BackgroundColor3 = CONFIG.Colors.Background}, CONFIG.Animations.Quick)
+				Tween(Icon, {Size = UDim2.new(0, 42, 0, 42), Position = UDim2.new(0, 10, 0.5, -21)}, CONFIG.Animations.Quick)
+			end
+		end)
+
+		Run.MouseButton1Click:Connect(function()
+			if busy then return end
+			busy = true
+			PlaySound(CONFIG.Sounds.Click, 0.2)
+			Run.Text = "..."
+			Tween(Run, {BackgroundColor3 = CONFIG.Colors.Warning}, CONFIG.Animations.Quick)
+
+			if asyncLoad then
+				-- Azure may intentionally keep its loader thread alive.
+
+				local ok, source = pcall(function()
+					return game:HttpGet(url)
+				end)
+				if ok and source and #source > 0 then
+					Run.Text = "✓"
+					Tween(Run, {BackgroundColor3 = CONFIG.Colors.Success}, CONFIG.Animations.Quick)
+					Notify("Script Hub", name .. " started successfully!")
+					task.spawn(function()
+						local success, err = pcall(function()
+							loadstring(source)()
+						end)
+						if not success then
+							warn("[SCRIPT HUB] " .. name .. ": " .. tostring(err))
+						end
+					end)
+				else
+					Run.Text = "✕"
+					Tween(Run, {BackgroundColor3 = CONFIG.Colors.Danger}, CONFIG.Animations.Quick)
+					Notify("Script Hub", name .. " could not be downloaded.")
+				end
+				task.wait(1.2)
+				Run.Text = "RUN"
+				Tween(Run, {BackgroundColor3 = color}, CONFIG.Animations.Quick)
+				busy = false
+				return
+			end
+
+			task.spawn(function()
+				local ok, err = pcall(function()
+					loadstring(game:HttpGet(url))()
+				end)
+				if ok then
+					Run.Text = "✓"
+					Tween(Run, {BackgroundColor3 = CONFIG.Colors.Success}, CONFIG.Animations.Quick)
+					Notify("Script Hub", name .. " loaded successfully!")
+				else
+					Run.Text = "✕"
+					Tween(Run, {BackgroundColor3 = CONFIG.Colors.Danger}, CONFIG.Animations.Quick)
+					Notify("Script Hub", name .. " failed to load.")
+					warn("[SCRIPT HUB] " .. name .. ": " .. tostring(err))
+				end
+				task.wait(1.2)
+				Run.Text = "RUN"
+				Tween(Run, {BackgroundColor3 = color}, CONFIG.Animations.Quick)
+				busy = false
+			end)
+		end)
+	end
+
+	CreateCard(1, "🎮", CONFIG.Colors.Accent, "Games HUB", "Games hub with multiple tools and features.", "https://api.canhub.dev/code", false)
+	CreateCard(2, "✈", CONFIG.Colors.Info, "FLY Gui V9", "Fly GUI with movement controls.", "https://raw.githubusercontent.com/xxmengi/FLY-Gui-V9/5022602fdc8a3070d1d72bd163ad62ea781910be/FLY%20Gui%20V9", false)
+	CreateCard(3, "🔷", Color3.fromRGB(59,130,246), "Cobalt", "Cobalt script hub and utility collection.", "https://gitlab.com/upio/cobalt/-/releases/permalink/latest/downloads/Cobalt.luau", false)
+	CreateCard(4, "♾️", CONFIG.Colors.Warning, "Infinite Yield", "Popular command and utility admin system.", "https://raw.githubusercontent.com/EdgeIY/infiniteyield/master/source", false)
+	CreateCard(5, "💎", Color3.fromRGB(168,85,247), "Limited Larper", "Limited-related utility script.", "https://robloxscripts.com/raw/limited-larper", false)
+	CreateCard(6, "✨", Color3.fromRGB(236,72,153), "Seliwia", "Custom Seliwia remake script.", "https://raw.githubusercontent.com/xxmengi/FLY-Gui-V9/refs/heads/main/Seliwia%20REAMADE", false)
+	CreateCard(7, "☁️", Color3.fromRGB(14,165,233), "Azure Modded", "Modded Azure script and tools.", "https://raw.githubusercontent.com/Actyrn/Scripts/main/AzureModded", true)
+end)()
+
+-- PAGE CONTAINER
+SearchContainer.Position = UDim2.new(0, 14, 0, 0)
+SearchContainer.Parent = MainPage
+ListContainer.Position = UDim2.new(0, 14, 0, 52)
+ListContainer.Size = UDim2.new(1, -28, 1, -100)
+ListContainer.Parent = MainPage
+InfoBar.Position = UDim2.new(0, 14, 1, -42)
+InfoBar.Parent = MainPage
+
+-- ACTION PANEL
+local ActionPanel = Instance.new("Frame")
+ActionPanel.Name = "ActionPanel"
+ActionPanel.Size = UDim2.new(0, 360, 0, 600)
+ActionPanel.Position = UDim2.new(0.5, 250, 0.5, -300)
+ActionPanel.BackgroundColor3 = CONFIG.Colors.Background
+ActionPanel.BackgroundTransparency = 0.02
+ActionPanel.BorderSizePixel = 0
+ActionPanel.Active = true
+ActionPanel.ClipsDescendants = true
+ActionPanel.Visible = false
+ActionPanel.Parent = ScreenGui
+
+CreateCorner(ActionPanel, 16)
+CreateStroke(ActionPanel, CONFIG.Colors.Border, 1.5)
+CreateShadow(ActionPanel, 0.45)
+
+-- PANEL BACKGROUND
+local PanelGradient = Instance.new("UIGradient")
+PanelGradient.Color = ColorSequence.new({
+	ColorSequenceKeypoint.new(0, Color3.fromRGB(18, 18, 24)),
+	ColorSequenceKeypoint.new(0.5, Color3.fromRGB(22, 20, 30)),
+	ColorSequenceKeypoint.new(1, Color3.fromRGB(18, 18, 24)),
+})
+PanelGradient.Rotation = 45
+PanelGradient.Parent = ActionPanel
+
+-- ACTION BAR
+local ActionTopBar = Instance.new("Frame")
+ActionTopBar.Name = "TopBar"
+ActionTopBar.Size = UDim2.new(1, 0, 0, 52)
+ActionTopBar.BackgroundColor3 = CONFIG.Colors.Surface
+ActionTopBar.BorderSizePixel = 0
+ActionTopBar.Parent = ActionPanel
+
+CreateCorner(ActionTopBar, 16)
+
+local ActionTopBarFix = Instance.new("Frame")
+ActionTopBarFix.Size = UDim2.new(1, 0, 0, 16)
+ActionTopBarFix.Position = UDim2.new(0, 0, 1, -16)
+ActionTopBarFix.BackgroundColor3 = CONFIG.Colors.Surface
+ActionTopBarFix.BorderSizePixel = 0
+ActionTopBarFix.Parent = ActionTopBar
+
+-- ACCENT
+local ActionTopBarAccent = Instance.new("Frame")
+ActionTopBarAccent.Size = UDim2.new(1, 0, 0, 2)
+ActionTopBarAccent.Position = UDim2.new(0, 0, 1, -2)
+ActionTopBarAccent.BackgroundColor3 = CONFIG.Colors.Accent
+ActionTopBarAccent.BorderSizePixel = 0
+ActionTopBarAccent.Parent = ActionTopBar
+CreateGradient(ActionTopBarAccent, CONFIG.Colors.Accent, CONFIG.Colors.AccentGlow)
+
+-- ACTION CONTENT
+local ActionContent = Instance.new("ScrollingFrame")
+ActionContent.Name = "Content"
+ActionContent.Size = UDim2.new(1, 0, 1, -52)
+ActionContent.Position = UDim2.new(0, 0, 0, 52)
+ActionContent.BackgroundTransparency = 1
+ActionContent.BorderSizePixel = 0
+ActionContent.ScrollBarThickness = 5
+ActionContent.ScrollBarImageColor3 = CONFIG.Colors.Accent
+ActionContent.ScrollBarImageTransparency = 0.3
+ActionContent.CanvasSize = UDim2.new(0, 0, 0, 2250)
+ActionContent.Parent = ActionPanel
+
+local ActionTitle = Instance.new("TextLabel")
+ActionTitle.Name = "Title"
+ActionTitle.Size = UDim2.new(1, -80, 1, 0)
+ActionTitle.Position = UDim2.new(0, 18, 0, 0)
+ActionTitle.BackgroundTransparency = 1
+ActionTitle.Text = "Player Actions"
+ActionTitle.Font = Enum.Font.GothamBold
+ActionTitle.TextSize = 16
+ActionTitle.TextColor3 = CONFIG.Colors.TextPrimary
+ActionTitle.TextXAlignment = Enum.TextXAlignment.Left
+ActionTitle.Parent = ActionTopBar
+
+local ActionClose = Instance.new("TextButton")
+ActionClose.Name = "Close"
+ActionClose.Size = UDim2.new(0, 34, 0, 34)
+ActionClose.Position = UDim2.new(1, -42, 0.5, -17)
+ActionClose.BackgroundColor3 = CONFIG.Colors.Danger
+ActionClose.BackgroundTransparency = 0.2
+ActionClose.Text = ""
+ActionClose.AutoButtonColor = false
+ActionClose.Parent = ActionTopBar
+
+CreateCorner(ActionClose, 10)
+
+local ActionCloseIcon = Instance.new("TextLabel")
+ActionCloseIcon.Size = UDim2.new(1, 0, 1, 0)
+ActionCloseIcon.BackgroundTransparency = 1
+ActionCloseIcon.Text = "×"
+ActionCloseIcon.Font = Enum.Font.GothamBold
+ActionCloseIcon.TextSize = 24
+ActionCloseIcon.TextColor3 = CONFIG.Colors.TextPrimary
+ActionCloseIcon.Parent = ActionClose
+
+-- PROFILE
+local ProfileHeader = Instance.new("Frame")
+ProfileHeader.Name = "ProfileHeader"
+ProfileHeader.Size = UDim2.new(1, -28, 0, 95)
+ProfileHeader.Position = UDim2.new(0, 14, 0, 14)
+ProfileHeader.BackgroundColor3 = CONFIG.Colors.Surface
+ProfileHeader.BorderSizePixel = 0
+ProfileHeader.Parent = ActionContent
+
+CreateCorner(ProfileHeader, 12)
+
+local AvatarImage = Instance.new("ImageLabel")
+AvatarImage.Name = "Avatar"
+AvatarImage.Size = UDim2.new(0, 68, 0, 68)
+AvatarImage.Position = UDim2.new(0, 14, 0.5, -34)
+AvatarImage.BackgroundColor3 = CONFIG.Colors.Background
+AvatarImage.BorderSizePixel = 0
+AvatarImage.Image = ""
+AvatarImage.Parent = ProfileHeader
+CreateCorner(AvatarImage, 34)
+
+-- AVATAR GLOW
+local AvatarRing = Instance.new("UIStroke")
+AvatarRing.Color = CONFIG.Colors.Accent
+AvatarRing.Thickness = 2
+AvatarRing.Transparency = 0.3
+AvatarRing.Parent = AvatarImage
+
+local ProfileName = Instance.new("TextLabel")
+ProfileName.Name = "DisplayName"
+ProfileName.Size = UDim2.new(1, -170, 0, 24)
+ProfileName.Position = UDim2.new(0, 94, 0, 10)
+ProfileName.BackgroundTransparency = 1
+ProfileName.Text = "Select a player"
+ProfileName.Font = Enum.Font.GothamBold
+ProfileName.TextSize = 17
+ProfileName.TextColor3 = CONFIG.Colors.TextPrimary
+ProfileName.TextXAlignment = Enum.TextXAlignment.Left
+ProfileName.Parent = ProfileHeader
+
+local ProfileUser = Instance.new("TextLabel")
+ProfileUser.Name = "Username"
+ProfileUser.Size = UDim2.new(1, -170, 0, 18)
+ProfileUser.Position = UDim2.new(0, 94, 0, 34)
+ProfileUser.BackgroundTransparency = 1
+ProfileUser.Text = "@username"
+ProfileUser.Font = Enum.Font.Gotham
+ProfileUser.TextSize = 13
+ProfileUser.TextColor3 = CONFIG.Colors.TextSecondary
+ProfileUser.TextXAlignment = Enum.TextXAlignment.Left
+ProfileUser.Parent = ProfileHeader
+
+local ProfileId = Instance.new("TextLabel")
+ProfileId.Name = "UserId"
+ProfileId.Size = UDim2.new(1, -170, 0, 18)
+ProfileId.Position = UDim2.new(0, 94, 0, 52)
+ProfileId.BackgroundTransparency = 1
+ProfileId.Text = "ID: 0"
+ProfileId.Font = Enum.Font.Gotham
+ProfileId.TextSize = 12
+ProfileId.TextColor3 = CONFIG.Colors.TextMuted
+ProfileId.TextXAlignment = Enum.TextXAlignment.Left
+ProfileId.Parent = ProfileHeader
+
+local ProfileStatus = Instance.new("TextLabel")
+ProfileStatus.Name = "Status"
+ProfileStatus.Size = UDim2.new(1, -170, 0, 16)
+ProfileStatus.Position = UDim2.new(0, 94, 0, 70)
+ProfileStatus.BackgroundTransparency = 1
+ProfileStatus.Text = "Status: Loading..."
+ProfileStatus.Font = Enum.Font.Gotham
+ProfileStatus.TextSize = 11
+ProfileStatus.TextColor3 = CONFIG.Colors.TextMuted
+ProfileStatus.TextXAlignment = Enum.TextXAlignment.Left
+ProfileStatus.Parent = ProfileHeader
+
+-- COPY ACTIONS
+local CopyRow = Instance.new("Frame")
+CopyRow.Size = UDim2.new(0, 150, 0, 28)
+CopyRow.Position = UDim2.new(1, -164, 0, 10)
+CopyRow.BackgroundTransparency = 1
+CopyRow.Parent = ProfileHeader
+
+local CopyIdButton = Instance.new("TextButton")
+CopyIdButton.Name = "CopyId"
+CopyIdButton.Size = UDim2.new(0.48, 0, 1, 0)
+CopyIdButton.BackgroundColor3 = CONFIG.Colors.Accent
+CopyIdButton.Text = "Copy ID"
+CopyIdButton.Font = Enum.Font.GothamBold
+CopyIdButton.TextSize = 10
+CopyIdButton.TextColor3 = CONFIG.Colors.TextPrimary
+CopyIdButton.AutoButtonColor = false
+CopyIdButton.Parent = CopyRow
+CreateCorner(CopyIdButton, 6)
+CreateGradient(CopyIdButton, CONFIG.Colors.Accent, CONFIG.Colors.AccentGlow)
+
+local CopyNameButton = Instance.new("TextButton")
+CopyNameButton.Name = "CopyName"
+CopyNameButton.Size = UDim2.new(0.48, 0, 1, 0)
+CopyNameButton.Position = UDim2.new(0.52, 0, 0, 0)
+CopyNameButton.BackgroundColor3 = CONFIG.Colors.SurfaceHover
+CopyNameButton.Text = "Copy Name"
+CopyNameButton.Font = Enum.Font.GothamBold
+CopyNameButton.TextSize = 10
+CopyNameButton.TextColor3 = CONFIG.Colors.TextPrimary
+CopyNameButton.AutoButtonColor = false
+CopyNameButton.Parent = CopyRow
+CreateCorner(CopyNameButton, 6)
+
+-- PLAYER STATS
+local StatsGrid = Instance.new("Frame")
+StatsGrid.Name = "StatsGrid"
+StatsGrid.Size = UDim2.new(1, -28, 0, 75)
+StatsGrid.Position = UDim2.new(0, 14, 0, 117)
+StatsGrid.BackgroundTransparency = 1
+StatsGrid.Parent = ActionContent
+
+local StatsLayout = Instance.new("UIGridLayout")
+StatsLayout.CellSize = UDim2.new(0.48, 0, 0, 34)
+StatsLayout.CellPadding = UDim2.new(0.04, 0, 0, 7)
+StatsLayout.Parent = StatsGrid
+
+local function CreateStatCard(name, icon, value)
+	local card = Instance.new("Frame")
+	card.Name = name
+	card.BackgroundColor3 = CONFIG.Colors.Surface
+	card.BorderSizePixel = 0
+	CreateCorner(card, 10)
+
+	local iconLabel = Instance.new("ImageLabel")
+	iconLabel.Size = UDim2.new(0, 20, 0, 20)
+	iconLabel.Position = UDim2.new(0, 12, 0.5, -10)
+	iconLabel.BackgroundTransparency = 1
+	iconLabel.Image = icon
+	iconLabel.ImageColor3 = CONFIG.Colors.Accent
+	iconLabel.Parent = card
+
+	local valueLabel = Instance.new("TextLabel")
+	valueLabel.Name = "Value"
+	valueLabel.Size = UDim2.new(1, -40, 1, 0)
+	valueLabel.Position = UDim2.new(0, 36, 0, 0)
+	valueLabel.BackgroundTransparency = 1
+	valueLabel.Text = value
+	valueLabel.Font = Enum.Font.GothamBold
+	valueLabel.TextSize = 12
+	valueLabel.TextColor3 = CONFIG.Colors.TextPrimary
+	valueLabel.TextXAlignment = Enum.TextXAlignment.Left
+	valueLabel.Parent = card
+
+	return card
+end
+
+local StatHealth = CreateStatCard("Health", "rbxassetid://7733965302", "N/A")
+StatHealth.Parent = StatsGrid
+
+local StatPosition = CreateStatCard("Position", "rbxassetid://7733968885", "N/A")
+StatPosition.Parent = StatsGrid
+
+local StatDistance = CreateStatCard("Distance", "rbxassetid://7733955511", "N/A")
+StatDistance.Parent = StatsGrid
+
+local StatTeam = CreateStatCard("Team", "rbxassetid://7733955740", "N/A")
+StatTeam.Parent = StatsGrid
+
+-- SPY MODE
+local SpySection = Instance.new("Frame")
+SpySection.Name = "SpySection"
+SpySection.Size = UDim2.new(1, -28, 0, 180)
+SpySection.Position = UDim2.new(0, 14, 0, 200)
+SpySection.BackgroundColor3 = CONFIG.Colors.Surface
+SpySection.BorderSizePixel = 0
+SpySection.Parent = ActionContent
+
+CreateCorner(SpySection, 12)
+
+local SpyTitle = Instance.new("TextLabel")
+SpyTitle.Name = "Title"
+SpyTitle.Size = UDim2.new(1, -20, 0, 30)
+SpyTitle.Position = UDim2.new(0, 14, 0, 10)
+SpyTitle.BackgroundTransparency = 1
+SpyTitle.Text = "🔍  SPECTATOR MODE"
+SpyTitle.Font = Enum.Font.GothamBold
+SpyTitle.TextSize = 13
+SpyTitle.TextColor3 = CONFIG.Colors.Accent
+SpyTitle.TextXAlignment = Enum.TextXAlignment.Left
+SpyTitle.Parent = SpySection
+
+-- SPY SELECTOR
+local SpyModeLabel = Instance.new("TextLabel")
+SpyModeLabel.Size = UDim2.new(0, 80, 0, 30)
+SpyModeLabel.Position = UDim2.new(0, 14, 0, 44)
+SpyModeLabel.BackgroundTransparency = 1
+SpyModeLabel.Text = "Camera:"
+SpyModeLabel.Font = Enum.Font.Gotham
+SpyModeLabel.TextSize = 12
+SpyModeLabel.TextColor3 = CONFIG.Colors.TextSecondary
+SpyModeLabel.TextXAlignment = Enum.TextXAlignment.Left
+SpyModeLabel.Parent = SpySection
+
+local SpyModeDropdown = Instance.new("TextButton")
+SpyModeDropdown.Name = "ModeDropdown"
+SpyModeDropdown.Size = UDim2.new(0, 190, 0, 30)
+SpyModeDropdown.Position = UDim2.new(0, 94, 0, 44)
+SpyModeDropdown.BackgroundColor3 = CONFIG.Colors.Background
+SpyModeDropdown.Text = "Follow"
+SpyModeDropdown.Font = Enum.Font.GothamBold
+SpyModeDropdown.TextSize = 12
+SpyModeDropdown.TextColor3 = CONFIG.Colors.TextPrimary
+SpyModeDropdown.AutoButtonColor = false
+SpyModeDropdown.Parent = SpySection
+
+CreateCorner(SpyModeDropdown, 8)
+CreateStroke(SpyModeDropdown, CONFIG.Colors.Border)
+
+-- ORBIT DISTANCE
+local OrbitLabel = Instance.new("TextLabel")
+OrbitLabel.Size = UDim2.new(0, 80, 0, 30)
+OrbitLabel.Position = UDim2.new(0, 14, 0, 80)
+OrbitLabel.BackgroundTransparency = 1
+OrbitLabel.Text = "Distance:"
+OrbitLabel.Font = Enum.Font.Gotham
+OrbitLabel.TextSize = 12
+OrbitLabel.TextColor3 = CONFIG.Colors.TextSecondary
+OrbitLabel.TextXAlignment = Enum.TextXAlignment.Left
+OrbitLabel.Parent = SpySection
+
+local OrbitValue = Instance.new("TextLabel")
+OrbitValue.Size = UDim2.new(0, 40, 0, 30)
+OrbitValue.Position = UDim2.new(0, 94, 0, 80)
+OrbitValue.BackgroundTransparency = 1
+OrbitValue.Text = "15"
+OrbitValue.Font = Enum.Font.GothamBold
+OrbitValue.TextSize = 14
+OrbitValue.TextColor3 = CONFIG.Colors.Accent
+OrbitValue.Parent = SpySection
+
+local OrbitSlider = Instance.new("Frame")
+OrbitSlider.Size = UDim2.new(0, 150, 0, 6)
+OrbitSlider.Position = UDim2.new(0, 138, 0, 92)
+OrbitSlider.BackgroundColor3 = CONFIG.Colors.Background
+OrbitSlider.BorderSizePixel = 0
+OrbitSlider.Parent = SpySection
+
+CreateCorner(OrbitSlider, 3)
+
+local OrbitFill = Instance.new("Frame")
+OrbitFill.Name = "Fill"
+OrbitFill.Size = UDim2.new(0.3, 0, 1, 0)
+OrbitFill.BackgroundColor3 = CONFIG.Colors.Accent
+OrbitFill.BorderSizePixel = 0
+OrbitFill.Parent = OrbitSlider
+
+CreateCorner(OrbitFill, 3)
+CreateGradient(OrbitFill, CONFIG.Colors.Accent, CONFIG.Colors.AccentGlow)
+
+local OrbitKnob = Instance.new("Frame")
+OrbitKnob.Size = UDim2.new(0, 16, 0, 16)
+OrbitKnob.Position = UDim2.new(0.3, -8, 0.5, -8)
+OrbitKnob.BackgroundColor3 = CONFIG.Colors.TextPrimary
+OrbitKnob.BorderSizePixel = 0
+OrbitKnob.Parent = OrbitSlider
+
+CreateCorner(OrbitKnob, 8)
+
+-- SPY CONTROLS
+local SpyToggle = Instance.new("TextButton")
+SpyToggle.Name = "SpyToggle"
+SpyToggle.Size = UDim2.new(0.46, 0, 0, 34)
+SpyToggle.Position = UDim2.new(0.03, 0, 1, -52)
+SpyToggle.BackgroundColor3 = CONFIG.Colors.Success
+SpyToggle.Text = "Start Spying"
+SpyToggle.Font = Enum.Font.GothamBold
+SpyToggle.TextSize = 13
+SpyToggle.TextColor3 = CONFIG.Colors.TextPrimary
+SpyToggle.AutoButtonColor = false
+SpyToggle.Parent = SpySection
+
+CreateCorner(SpyToggle, 10)
+
+local SpyOverlay = Instance.new("TextButton")
+SpyOverlay.Name = "OverlayToggle"
+SpyOverlay.Size = UDim2.new(0.46, 0, 0, 34)
+SpyOverlay.Position = UDim2.new(0.51, 0, 1, -52)
+SpyOverlay.BackgroundColor3 = CONFIG.Colors.SurfaceHover
+SpyOverlay.Text = "Info Overlay: OFF"
+SpyOverlay.Font = Enum.Font.GothamBold
+SpyOverlay.TextSize = 12
+SpyOverlay.TextColor3 = CONFIG.Colors.TextSecondary
+SpyOverlay.AutoButtonColor = false
+SpyOverlay.Parent = SpySection
+
+CreateCorner(SpyOverlay, 10)
+
+-- FOV
+local FovLabel = Instance.new("TextLabel")
+FovLabel.Size = UDim2.new(0, 80, 0, 22)
+FovLabel.Position = UDim2.new(0, 14, 0, 110)
+FovLabel.BackgroundTransparency = 1
+FovLabel.Text = "FOV: 70"
+FovLabel.Font = Enum.Font.Gotham
+FovLabel.TextSize = 11
+FovLabel.TextColor3 = CONFIG.Colors.TextSecondary
+FovLabel.TextXAlignment = Enum.TextXAlignment.Left
+FovLabel.Parent = SpySection
+
+local FovSlider = Instance.new("Frame")
+FovSlider.Size = UDim2.new(0, 150, 0, 4)
+FovSlider.Position = UDim2.new(0, 94, 0, 119)
+FovSlider.BackgroundColor3 = CONFIG.Colors.Background
+FovSlider.BorderSizePixel = 0
+FovSlider.Parent = SpySection
+CreateCorner(FovSlider, 2)
+
+local FovFill = Instance.new("Frame")
+FovFill.Name = "Fill"
+FovFill.Size = UDim2.new(0.35, 0, 1, 0)
+FovFill.BackgroundColor3 = CONFIG.Colors.Accent
+FovFill.BorderSizePixel = 0
+FovFill.Parent = FovSlider
+CreateCorner(FovFill, 2)
+CreateGradient(FovFill, CONFIG.Colors.Accent, CONFIG.Colors.AccentGlow)
+
+local FovKnob = Instance.new("Frame")
+FovKnob.Size = UDim2.new(0, 12, 0, 12)
+FovKnob.Position = UDim2.new(0.35, -6, 0.5, -6)
+FovKnob.BackgroundColor3 = CONFIG.Colors.TextPrimary
+FovKnob.BorderSizePixel = 0
+FovKnob.Parent = FovSlider
+CreateCorner(FovKnob, 6)
+
+-- TELEPORT
+local TeleportSection = Instance.new("Frame")
+TeleportSection.Name = "TeleportSection"
+TeleportSection.Size = UDim2.new(1, -28, 0, 220)
+TeleportSection.Position = UDim2.new(0, 14, 0, 388)
+TeleportSection.BackgroundColor3 = CONFIG.Colors.Surface
+TeleportSection.BorderSizePixel = 0
+TeleportSection.Parent = ActionContent
+
+CreateCorner(TeleportSection, 12)
+
+local TeleportTitle = Instance.new("TextLabel")
+TeleportTitle.Name = "Title"
+TeleportTitle.Size = UDim2.new(1, -20, 0, 30)
+TeleportTitle.Position = UDim2.new(0, 14, 0, 10)
+TeleportTitle.BackgroundTransparency = 1
+TeleportTitle.Text = "⚡  TELEPORTATION"
+TeleportTitle.Font = Enum.Font.GothamBold
+TeleportTitle.TextSize = 13
+TeleportTitle.TextColor3 = CONFIG.Colors.Warning
+TeleportTitle.TextXAlignment = Enum.TextXAlignment.Left
+TeleportTitle.Parent = TeleportSection
+
+-- TELEPORT OPTIONS
+local TeleportGrid = Instance.new("Frame")
+TeleportGrid.Size = UDim2.new(1, -20, 0, 115)
+TeleportGrid.Position = UDim2.new(0, 10, 0, 40)
+TeleportGrid.BackgroundTransparency = 1
+TeleportGrid.Parent = TeleportSection
+
+local TeleportLayout = Instance.new("UIGridLayout")
+TeleportLayout.CellSize = UDim2.new(0.32, -4, 0, 36)
+TeleportLayout.CellPadding = UDim2.new(0.02, 0, 0, 7)
+TeleportLayout.Parent = TeleportGrid
+
+local function CreateTeleportButton(text, color)
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.new(1, 0, 1, 0)
+	btn.BackgroundColor3 = color or CONFIG.Colors.Background
+	btn.Text = text
+	btn.Font = Enum.Font.GothamBold
+	btn.TextSize = 11
+	btn.TextColor3 = CONFIG.Colors.TextPrimary
+	btn.AutoButtonColor = false
+	CreateCorner(btn, 8)
+	return btn
+end
+
+local BtnTeleport = CreateTeleportButton("To Player", CONFIG.Colors.Accent)
+BtnTeleport.Parent = TeleportGrid
+CreateGradient(BtnTeleport, CONFIG.Colors.Accent, CONFIG.Colors.AccentGlow)
+
+local BtnBehind = CreateTeleportButton("Behind", CONFIG.Colors.Background)
+BtnBehind.Parent = TeleportGrid
+
+local BtnFront = CreateTeleportButton("In Front", CONFIG.Colors.Background)
+BtnFront.Parent = TeleportGrid
+
+local BtnAbove = CreateTeleportButton("Above", CONFIG.Colors.Background)
+BtnAbove.Parent = TeleportGrid
+
+local BtnBelow = CreateTeleportButton("Below", CONFIG.Colors.Background)
+BtnBelow.Parent = TeleportGrid
+
+local BtnSmart = CreateTeleportButton("Smart Safe", CONFIG.Colors.Success)
+BtnSmart.Parent = TeleportGrid
+
+-- TWEEN TOGGLE
+local TweenToggle = Instance.new("TextButton")
+TweenToggle.Name = "TweenToggle"
+TweenToggle.Size = UDim2.new(0.48, 0, 0, 30)
+TweenToggle.Position = UDim2.new(0.02, 0, 1, -40)
+TweenToggle.BackgroundColor3 = CONFIG.Colors.Accent
+TweenToggle.Text = " Smooth Tween ✓"
+TweenToggle.Font = Enum.Font.GothamBold
+TweenToggle.TextSize = 11
+TweenToggle.TextColor3 = CONFIG.Colors.TextPrimary
+TweenToggle.AutoButtonColor = false
+TweenToggle.Parent = TeleportSection
+
+CreateCorner(TweenToggle, 8)
+CreateGradient(TweenToggle, CONFIG.Colors.Accent, CONFIG.Colors.AccentGlow)
+
+-- FOLLOW TOGGLE
+local FollowToggle = Instance.new("TextButton")
+FollowToggle.Name = "FollowToggle"
+FollowToggle.Size = UDim2.new(0.48, 0, 0, 30)
+FollowToggle.Position = UDim2.new(0.51, 0, 1, -40)
+FollowToggle.BackgroundColor3 = CONFIG.Colors.SurfaceHover
+FollowToggle.Text = "Follow: OFF"
+FollowToggle.Font = Enum.Font.GothamBold
+FollowToggle.TextSize = 11
+FollowToggle.TextColor3 = CONFIG.Colors.TextSecondary
+FollowToggle.AutoButtonColor = false
+FollowToggle.Parent = TeleportSection
+
+CreateCorner(FollowToggle, 8)
+
+-- EXTRA TOOLS
+local ExtraSection = Instance.new("Frame")
+ExtraSection.Name = "ExtraSection"
+ExtraSection.Size = UDim2.new(1, -28, 0, 105)
+ExtraSection.Position = UDim2.new(0, 14, 0, 616)
+ExtraSection.BackgroundColor3 = CONFIG.Colors.Surface
+ExtraSection.BorderSizePixel = 0
+ExtraSection.Parent = ActionContent
+
+CreateCorner(ExtraSection, 12)
+
+local ExtraTitle = Instance.new("TextLabel")
+ExtraTitle.Name = "Title"
+ExtraTitle.Size = UDim2.new(1, -20, 0, 30)
+ExtraTitle.Position = UDim2.new(0, 14, 0, 10)
+ExtraTitle.BackgroundTransparency = 1
+ExtraTitle.Text = "✨  EXTRA TOOLS"
+ExtraTitle.Font = Enum.Font.GothamBold
+ExtraTitle.TextSize = 13
+ExtraTitle.TextColor3 = CONFIG.Colors.Success
+ExtraTitle.TextXAlignment = Enum.TextXAlignment.Left
+ExtraTitle.Parent = ExtraSection
+
+local ExtraGrid = Instance.new("Frame")
+ExtraGrid.Size = UDim2.new(1, -20, 0, 52)
+ExtraGrid.Position = UDim2.new(0, 10, 0, 42)
+ExtraGrid.BackgroundTransparency = 1
+ExtraGrid.Parent = ExtraSection
+
+local ExtraLayout = Instance.new("UIGridLayout")
+ExtraLayout.CellSize = UDim2.new(0.32, -4, 0, 36)
+ExtraLayout.CellPadding = UDim2.new(0.02, 0, 0, 7)
+ExtraLayout.Parent = ExtraGrid
+
+local BtnESP = CreateTeleportButton("ESP: OFF", CONFIG.Colors.Background)
+BtnESP.Parent = ExtraGrid
+
+local BtnHighlight = CreateTeleportButton("Glow: OFF", CONFIG.Colors.Background)
+BtnHighlight.Parent = ExtraGrid
+
+local BtnView = CreateTeleportButton("View Player", CONFIG.Colors.Accent)
+BtnView.Parent = ExtraGrid
+CreateGradient(BtnView, CONFIG.Colors.Accent, CONFIG.Colors.AccentGlow)
+
+-- SPY HUD
+local SpyHud = Instance.new("Frame")
+SpyHud.Name = "SpyHud"
+SpyHud.Size = UDim2.new(0, 310, 0, 170)
+SpyHud.Position = UDim2.new(0, 24, 0.5, -85)
+SpyHud.BackgroundColor3 = CONFIG.Colors.Background
+SpyHud.BackgroundTransparency = 0.08
+SpyHud.BorderSizePixel = 0
+SpyHud.Visible = false
+SpyHud.Parent = ScreenGui
+
+CreateCorner(SpyHud, 14)
+CreateStroke(SpyHud, CONFIG.Colors.Border)
+CreateShadow(SpyHud, 0.4)
+
+local HudTitle = Instance.new("TextLabel")
+HudTitle.Size = UDim2.new(1, -20, 0, 30)
+HudTitle.Position = UDim2.new(0, 14, 0, 10)
+HudTitle.BackgroundTransparency = 1
+HudTitle.Text = "👁 SPECTATING"
+HudTitle.Font = Enum.Font.GothamBold
+HudTitle.TextSize = 14
+HudTitle.TextColor3 = CONFIG.Colors.Accent
+HudTitle.TextXAlignment = Enum.TextXAlignment.Left
+HudTitle.Parent = SpyHud
+
+local HudTarget = Instance.new("TextLabel")
+HudTarget.Name = "Target"
+HudTarget.Size = UDim2.new(1, -20, 0, 24)
+HudTarget.Position = UDim2.new(0, 14, 0, 38)
+HudTarget.BackgroundTransparency = 1
+HudTarget.Text = "Target: None"
+HudTarget.Font = Enum.Font.GothamBold
+HudTarget.TextSize = 13
+HudTarget.TextColor3 = CONFIG.Colors.TextPrimary
+HudTarget.TextXAlignment = Enum.TextXAlignment.Left
+HudTarget.Parent = SpyHud
+
+local HudMode = Instance.new("TextLabel")
+HudMode.Name = "Mode"
+HudMode.Size = UDim2.new(1, -20, 0, 22)
+HudMode.Position = UDim2.new(0, 14, 0, 62)
+HudMode.BackgroundTransparency = 1
+HudMode.Text = "Mode: Follow"
+HudMode.Font = Enum.Font.Gotham
+HudMode.TextSize = 12
+HudMode.TextColor3 = CONFIG.Colors.TextSecondary
+HudMode.TextXAlignment = Enum.TextXAlignment.Left
+HudMode.Parent = SpyHud
+
+local HudFov = Instance.new("TextLabel")
+HudFov.Name = "Fov"
+HudFov.Size = UDim2.new(1, -20, 0, 22)
+HudFov.Position = UDim2.new(0, 14, 0, 84)
+HudFov.BackgroundTransparency = 1
+HudFov.Text = "FOV: 70"
+HudFov.Font = Enum.Font.Gotham
+HudFov.TextSize = 12
+HudFov.TextColor3 = CONFIG.Colors.TextSecondary
+HudFov.TextXAlignment = Enum.TextXAlignment.Left
+HudFov.Parent = SpyHud
+
+local HudHint = Instance.new("TextLabel")
+HudHint.Size = UDim2.new(1, -20, 0, 22)
+HudHint.Position = UDim2.new(0, 14, 0, 106)
+HudHint.BackgroundTransparency = 1
+HudHint.Text = "Press [Q] to exit spy mode"
+HudHint.Font = Enum.Font.Gotham
+HudHint.TextSize = 11
+HudHint.TextColor3 = CONFIG.Colors.TextMuted
+HudHint.TextXAlignment = Enum.TextXAlignment.Left
+HudHint.Parent = SpyHud
+
+local HudStop = Instance.new("TextButton")
+HudStop.Size = UDim2.new(0.9, 0, 0, 30)
+HudStop.Position = UDim2.new(0.05, 0, 1, -42)
+HudStop.BackgroundColor3 = CONFIG.Colors.Danger
+HudStop.Text = "Stop Spying"
+HudStop.Font = Enum.Font.GothamBold
+HudStop.TextSize = 12
+HudStop.TextColor3 = CONFIG.Colors.TextPrimary
+HudStop.AutoButtonColor = false
+HudStop.Parent = SpyHud
+
+CreateCorner(HudStop, 10)
+
+-- INVENTORY
+local InventorySection = Instance.new("Frame")
+InventorySection.Name = "InventorySection"
+InventorySection.Size = UDim2.new(1, -28, 0, 135)
+InventorySection.Position = UDim2.new(0, 14, 0, 728)
+InventorySection.BackgroundColor3 = CONFIG.Colors.Surface
+InventorySection.BorderSizePixel = 0
+InventorySection.Parent = ActionContent
+
+CreateCorner(InventorySection, 12)
+
+local InventoryTitle = Instance.new("TextLabel")
+InventoryTitle.Name = "Title"
+InventoryTitle.Size = UDim2.new(1, -20, 0, 30)
+InventoryTitle.Position = UDim2.new(0, 14, 0, 10)
+InventoryTitle.BackgroundTransparency = 1
+InventoryTitle.Text = "🎒  INVENTORY INSPECTOR"
+InventoryTitle.Font = Enum.Font.GothamBold
+InventoryTitle.TextSize = 13
+InventoryTitle.TextColor3 = CONFIG.Colors.Accent
+InventoryTitle.TextXAlignment = Enum.TextXAlignment.Left
+InventoryTitle.Parent = InventorySection
+
+local InventoryList = Instance.new("ScrollingFrame")
+InventoryList.Name = "InventoryList"
+InventoryList.Size = UDim2.new(1, -18, 0, 88)
+InventoryList.Position = UDim2.new(0, 9, 0, 40)
+InventoryList.BackgroundTransparency = 1
+InventoryList.BorderSizePixel = 0
+InventoryList.ScrollBarThickness = 4
+InventoryList.ScrollBarImageColor3 = CONFIG.Colors.Accent
+InventoryList.ScrollBarImageTransparency = 0.4
+InventoryList.CanvasSize = UDim2.new(0, 0, 0, 0)
+InventoryList.AutomaticCanvasSize = Enum.AutomaticSize.Y
+InventoryList.Parent = InventorySection
+
+local InventoryLayout = Instance.new("UIListLayout")
+InventoryLayout.Padding = UDim.new(0, 5)
+InventoryLayout.SortOrder = Enum.SortOrder.LayoutOrder
+InventoryLayout.Parent = InventoryList
+
+local InventoryPadding = Instance.new("UIPadding")
+InventoryPadding.PaddingTop = UDim.new(0, 3)
+InventoryPadding.PaddingBottom = UDim.new(0, 3)
+InventoryPadding.PaddingLeft = UDim.new(0, 3)
+InventoryPadding.PaddingRight = UDim.new(0, 3)
+InventoryPadding.Parent = InventoryList
+
+local InventoryEmpty = Instance.new("TextLabel")
+InventoryEmpty.Name = "Empty"
+InventoryEmpty.Size = UDim2.new(1, 0, 0, 30)
+InventoryEmpty.BackgroundTransparency = 1
+InventoryEmpty.Text = "No items found"
+InventoryEmpty.Font = Enum.Font.Gotham
+InventoryEmpty.TextSize = 12
+InventoryEmpty.TextColor3 = CONFIG.Colors.TextMuted
+InventoryEmpty.Visible = true
+InventoryEmpty.Parent = InventoryList
+
+local toolCardCounter = 0
+local function CreateToolCard(toolName, isEquipped)
+	toolCardCounter += 1
+	local card = Instance.new("Frame")
+	card.Name = "Tool_" .. tostring(toolCardCounter)
+	card.LayoutOrder = toolCardCounter
+	card.Size = UDim2.new(1, 0, 0, 30)
+	card.BackgroundColor3 = CONFIG.Colors.Background
+	card.BorderSizePixel = 0
+	CreateCorner(card, 8)
+
+	local icon = Instance.new("TextLabel")
+	icon.Size = UDim2.new(0, 26, 1, 0)
+	icon.Position = UDim2.new(0, 8, 0, 0)
+	icon.BackgroundTransparency = 1
+	icon.Text = isEquipped and "⚔️" or "📦"
+	icon.Font = Enum.Font.Gotham
+	icon.TextSize = 14
+	icon.Parent = card
+
+	local nameLabel = Instance.new("TextLabel")
+	nameLabel.Size = UDim2.new(1, -76, 1, 0)
+	nameLabel.Position = UDim2.new(0, 34, 0, 0)
+	nameLabel.BackgroundTransparency = 1
+	nameLabel.Text = toolName
+	nameLabel.Font = Enum.Font.GothamBold
+	nameLabel.TextSize = 12
+	nameLabel.TextColor3 = CONFIG.Colors.TextPrimary
+	nameLabel.TextXAlignment = Enum.TextXAlignment.Left
+	nameLabel.Parent = card
+
+	local statusLabel = Instance.new("TextLabel")
+	statusLabel.Size = UDim2.new(0, 54, 1, 0)
+	statusLabel.Position = UDim2.new(1, -60, 0, 0)
+	statusLabel.BackgroundTransparency = 1
+	statusLabel.Text = isEquipped and "Equipped" or "Stored"
+	statusLabel.Font = Enum.Font.Gotham
+	statusLabel.TextSize = 10
+	statusLabel.TextColor3 = isEquipped and CONFIG.Colors.Success or CONFIG.Colors.TextMuted
+	statusLabel.TextXAlignment = Enum.TextXAlignment.Right
+	statusLabel.Parent = card
+
+	return card
+end
+
+-- SESSIONS
+local SessionSection = Instance.new("Frame")
+SessionSection.Name = "SessionSection"
+SessionSection.Size = UDim2.new(1, -28, 0, 105)
+SessionSection.Position = UDim2.new(0, 14, 0, 870)
+SessionSection.BackgroundColor3 = CONFIG.Colors.Surface
+SessionSection.BorderSizePixel = 0
+SessionSection.Parent = ActionContent
+
+CreateCorner(SessionSection, 12)
+
+local SessionTitle = Instance.new("TextLabel")
+SessionTitle.Name = "Title"
+SessionTitle.Size = UDim2.new(1, -20, 0, 30)
+SessionTitle.Position = UDim2.new(0, 14, 0, 10)
+SessionTitle.BackgroundTransparency = 1
+SessionTitle.Text = "⏱  SESSION TRACKER"
+SessionTitle.Font = Enum.Font.GothamBold
+SessionTitle.TextSize = 13
+SessionTitle.TextColor3 = CONFIG.Colors.Warning
+SessionTitle.TextXAlignment = Enum.TextXAlignment.Left
+SessionTitle.Parent = SessionSection
+
+local SessionJoined = Instance.new("TextLabel")
+SessionJoined.Name = "Joined"
+SessionJoined.Size = UDim2.new(1, -18, 0, 22)
+SessionJoined.Position = UDim2.new(0, 14, 0, 38)
+SessionJoined.BackgroundTransparency = 1
+SessionJoined.Text = "Joined At: --:--:--"
+SessionJoined.Font = Enum.Font.Gotham
+SessionJoined.TextSize = 12
+SessionJoined.TextColor3 = CONFIG.Colors.TextSecondary
+SessionJoined.TextXAlignment = Enum.TextXAlignment.Left
+SessionJoined.Parent = SessionSection
+
+local SessionDuration = Instance.new("TextLabel")
+SessionDuration.Name = "Duration"
+SessionDuration.Size = UDim2.new(1, -18, 0, 22)
+SessionDuration.Position = UDim2.new(0, 14, 0, 60)
+SessionDuration.BackgroundTransparency = 1
+SessionDuration.Text = "Session Time: 00:00:00"
+SessionDuration.Font = Enum.Font.GothamBold
+SessionDuration.TextSize = 13
+SessionDuration.TextColor3 = CONFIG.Colors.TextPrimary
+SessionDuration.TextXAlignment = Enum.TextXAlignment.Left
+SessionDuration.Parent = SessionSection
+
+local SessionServer = Instance.new("TextLabel")
+SessionServer.Name = "ServerTime"
+SessionServer.Size = UDim2.new(1, -18, 0, 18)
+SessionServer.Position = UDim2.new(0, 14, 0, 82)
+SessionServer.BackgroundTransparency = 1
+SessionServer.Text = "Server Uptime: 00:00:00"
+SessionServer.Font = Enum.Font.Gotham
+SessionServer.TextSize = 11
+SessionServer.TextColor3 = CONFIG.Colors.TextMuted
+SessionServer.TextXAlignment = Enum.TextXAlignment.Left
+SessionServer.Parent = SessionSection
+
+-- ANIMATIONS
+local AnimationSection = Instance.new("Frame")
+AnimationSection.Name = "AnimationSection"
+AnimationSection.Size = UDim2.new(1, -28, 0, 115)
+AnimationSection.Position = UDim2.new(0, 14, 0, 982)
+AnimationSection.BackgroundColor3 = CONFIG.Colors.Surface
+AnimationSection.BorderSizePixel = 0
+AnimationSection.Parent = ActionContent
+
+CreateCorner(AnimationSection, 12)
+
+local AnimationTitle = Instance.new("TextLabel")
+AnimationTitle.Name = "Title"
+AnimationTitle.Size = UDim2.new(1, -20, 0, 30)
+AnimationTitle.Position = UDim2.new(0, 14, 0, 10)
+AnimationTitle.BackgroundTransparency = 1
+AnimationTitle.Text = "🎬  ANIMATION MONITOR"
+AnimationTitle.Font = Enum.Font.GothamBold
+AnimationTitle.TextSize = 13
+AnimationTitle.TextColor3 = CONFIG.Colors.Success
+AnimationTitle.TextXAlignment = Enum.TextXAlignment.Left
+AnimationTitle.Parent = AnimationSection
+
+local AnimGrid = Instance.new("Frame")
+AnimGrid.Size = UDim2.new(1, -18, 0, 72)
+AnimGrid.Position = UDim2.new(0, 9, 0, 38)
+AnimGrid.BackgroundTransparency = 1
+AnimGrid.Parent = AnimationSection
+
+local AnimLayout = Instance.new("UIGridLayout")
+AnimLayout.CellSize = UDim2.new(0.48, 0, 0, 32)
+AnimLayout.CellPadding = UDim2.new(0.04, 0, 0, 7)
+AnimLayout.Parent = AnimGrid
+
+local function CreateAnimCard(name, icon)
+	local card = Instance.new("Frame")
+	card.Name = name
+	card.BackgroundColor3 = CONFIG.Colors.Background
+	card.BorderSizePixel = 0
+	CreateCorner(card, 8)
+
+	local iconLabel = Instance.new("TextLabel")
+	iconLabel.Size = UDim2.new(0, 22, 1, 0)
+	iconLabel.Position = UDim2.new(0, 8, 0, 0)
+	iconLabel.BackgroundTransparency = 1
+	iconLabel.Text = icon
+	iconLabel.Font = Enum.Font.Gotham
+	iconLabel.TextSize = 12
+	iconLabel.Parent = card
+
+	local valueLabel = Instance.new("TextLabel")
+	valueLabel.Name = "Value"
+	valueLabel.Size = UDim2.new(1, -32, 1, 0)
+	valueLabel.Position = UDim2.new(0, 28, 0, 0)
+	valueLabel.BackgroundTransparency = 1
+	valueLabel.Text = "N/A"
+	valueLabel.Font = Enum.Font.GothamBold
+	valueLabel.TextSize = 11
+	valueLabel.TextColor3 = CONFIG.Colors.TextPrimary
+	valueLabel.TextXAlignment = Enum.TextXAlignment.Left
+	valueLabel.Parent = card
+
+	return card
+end
+
+local AnimCurrent = CreateAnimCard("CurrentAnim", "▶️")
+AnimCurrent.Parent = AnimGrid
+
+local AnimState = CreateAnimCard("HumanoidState", "🏃")
+AnimState.Parent = AnimGrid
+
+local AnimSpeed = CreateAnimCard("WalkSpeed", "⚡")
+AnimSpeed.Parent = AnimGrid
+
+local AnimJump = CreateAnimCard("JumpPower", "🦘")
+AnimJump.Parent = AnimGrid
+
+-- OUTFIT
+local OutfitSection = Instance.new("Frame")
+OutfitSection.Name = "OutfitSection"
+OutfitSection.Size = UDim2.new(1, -28, 0, 150)
+OutfitSection.Position = UDim2.new(0, 14, 0, 1105)
+OutfitSection.BackgroundColor3 = CONFIG.Colors.Surface
+OutfitSection.BorderSizePixel = 0
+OutfitSection.Parent = ActionContent
+
+CreateCorner(OutfitSection, 12)
+
+local OutfitTitle = Instance.new("TextLabel")
+OutfitTitle.Name = "Title"
+OutfitTitle.Size = UDim2.new(1, -20, 0, 30)
+OutfitTitle.Position = UDim2.new(0, 14, 0, 10)
+OutfitTitle.BackgroundTransparency = 1
+OutfitTitle.Text = "👕  OUTFIT VIEWER"
+OutfitTitle.Font = Enum.Font.GothamBold
+OutfitTitle.TextSize = 13
+OutfitTitle.TextColor3 = CONFIG.Colors.Info
+OutfitTitle.TextXAlignment = Enum.TextXAlignment.Left
+OutfitTitle.Parent = OutfitSection
+
+local OutfitList = Instance.new("ScrollingFrame")
+OutfitList.Name = "OutfitList"
+OutfitList.Size = UDim2.new(1, -18, 0, 102)
+OutfitList.Position = UDim2.new(0, 9, 0, 40)
+OutfitList.BackgroundTransparency = 1
+OutfitList.BorderSizePixel = 0
+OutfitList.ScrollBarThickness = 4
+OutfitList.ScrollBarImageColor3 = CONFIG.Colors.Accent
+OutfitList.ScrollBarImageTransparency = 0.4
+OutfitList.CanvasSize = UDim2.new(0, 0, 0, 0)
+OutfitList.AutomaticCanvasSize = Enum.AutomaticSize.Y
+OutfitList.Parent = OutfitSection
+
+local OutfitLayout = Instance.new("UIListLayout")
+OutfitLayout.Padding = UDim.new(0, 5)
+OutfitLayout.SortOrder = Enum.SortOrder.LayoutOrder
+OutfitLayout.Parent = OutfitList
+
+local OutfitPadding = Instance.new("UIPadding")
+OutfitPadding.PaddingTop = UDim.new(0, 3)
+OutfitPadding.PaddingBottom = UDim.new(0, 3)
+OutfitPadding.PaddingLeft = UDim.new(0, 3)
+OutfitPadding.PaddingRight = UDim.new(0, 3)
+OutfitPadding.Parent = OutfitList
+
+local OutfitEmpty = Instance.new("TextLabel")
+OutfitEmpty.Name = "Empty"
+OutfitEmpty.Size = UDim2.new(1, 0, 0, 30)
+OutfitEmpty.BackgroundTransparency = 1
+OutfitEmpty.Text = "No outfit data available"
+OutfitEmpty.Font = Enum.Font.Gotham
+OutfitEmpty.TextSize = 12
+OutfitEmpty.TextColor3 = CONFIG.Colors.TextMuted
+OutfitEmpty.Visible = true
+OutfitEmpty.Parent = OutfitList
+
+local outfitCardCounter = 0
+local function CreateOutfitCard(itemName, itemType)
+	outfitCardCounter += 1
+	local card = Instance.new("Frame")
+	card.Name = "Outfit_" .. tostring(outfitCardCounter)
+	card.LayoutOrder = outfitCardCounter
+	card.Size = UDim2.new(1, 0, 0, 30)
+	card.BackgroundColor3 = CONFIG.Colors.Background
+	card.BorderSizePixel = 0
+	CreateCorner(card, 8)
+
+	local typeColors = {
+		["Shirt"] = "👔",
+		["Pants"] = "👖",
+		["T-Shirt"] = "👕",
+		["Accessory"] = "🎀",
+		["Hat"] = "🎩",
+		["Hair"] = "💇",
+		["Face"] = "😊",
+		["Gear"] = "⚙️",
+		["BodyColor"] = "🎨",
+		["Other"] = "📎",
+	}
+
+	local icon = Instance.new("TextLabel")
+	icon.Size = UDim2.new(0, 26, 1, 0)
+	icon.Position = UDim2.new(0, 8, 0, 0)
+	icon.BackgroundTransparency = 1
+	icon.Text = typeColors[itemType] or "📎"
+	icon.Font = Enum.Font.Gotham
+	icon.TextSize = 14
+	icon.Parent = card
+
+	local nameLabel = Instance.new("TextLabel")
+	nameLabel.Size = UDim2.new(1, -80, 1, 0)
+	nameLabel.Position = UDim2.new(0, 34, 0, 0)
+	nameLabel.BackgroundTransparency = 1
+	nameLabel.Text = itemName
+	nameLabel.Font = Enum.Font.GothamBold
+	nameLabel.TextSize = 12
+	nameLabel.TextColor3 = CONFIG.Colors.TextPrimary
+	nameLabel.TextXAlignment = Enum.TextXAlignment.Left
+	nameLabel.Parent = card
+
+	local typeLabel = Instance.new("TextLabel")
+	typeLabel.Size = UDim2.new(0, 60, 1, 0)
+	typeLabel.Position = UDim2.new(1, -66, 0, 0)
+	typeLabel.BackgroundTransparency = 1
+	typeLabel.Text = itemType
+	typeLabel.Font = Enum.Font.Gotham
+	typeLabel.TextSize = 10
+	typeLabel.TextColor3 = CONFIG.Colors.TextMuted
+	typeLabel.TextXAlignment = Enum.TextXAlignment.Right
+	typeLabel.Parent = card
+
+	return card
+end
+
+-- FRIENDS
+local FriendSection = Instance.new("Frame")
+FriendSection.Name = "FriendSection"
+FriendSection.Size = UDim2.new(1, -28, 0, 105)
+FriendSection.Position = UDim2.new(0, 14, 0, 1263)
+FriendSection.BackgroundColor3 = CONFIG.Colors.Surface
+FriendSection.BorderSizePixel = 0
+FriendSection.Parent = ActionContent
+
+CreateCorner(FriendSection, 12)
+
+local FriendTitle = Instance.new("TextLabel")
+FriendTitle.Name = "Title"
+FriendTitle.Size = UDim2.new(1, -20, 0, 30)
+FriendTitle.Position = UDim2.new(0, 14, 0, 10)
+FriendTitle.BackgroundTransparency = 1
+FriendTitle.Text = "🤝  FRIEND CHECKER"
+FriendTitle.Font = Enum.Font.GothamBold
+FriendTitle.TextSize = 13
+FriendTitle.TextColor3 = CONFIG.Colors.AccentGlow
+FriendTitle.TextXAlignment = Enum.TextXAlignment.Left
+FriendTitle.Parent = FriendSection
+
+local FriendGrid = Instance.new("Frame")
+FriendGrid.Size = UDim2.new(1, -18, 0, 55)
+FriendGrid.Position = UDim2.new(0, 9, 0, 40)
+FriendGrid.BackgroundTransparency = 1
+FriendGrid.Parent = FriendSection
+
+local FriendLayout = Instance.new("UIGridLayout")
+FriendLayout.CellSize = UDim2.new(0.48, 0, 0, 24)
+FriendLayout.CellPadding = UDim2.new(0.04, 0, 0, 6)
+FriendLayout.Parent = FriendGrid
+
+local function CreateFriendStat(name, icon, color)
+	local card = Instance.new("Frame")
+	card.Name = name
+	card.BackgroundColor3 = CONFIG.Colors.Background
+	card.BorderSizePixel = 0
+	CreateCorner(card, 6)
+
+	local iconLabel = Instance.new("TextLabel")
+	iconLabel.Size = UDim2.new(0, 20, 1, 0)
+	iconLabel.Position = UDim2.new(0, 6, 0, 0)
+	iconLabel.BackgroundTransparency = 1
+	iconLabel.Text = icon
+	iconLabel.Font = Enum.Font.Gotham
+	iconLabel.TextSize = 11
+	iconLabel.Parent = card
+
+	local valueLabel = Instance.new("TextLabel")
+	valueLabel.Name = "Value"
+	valueLabel.Size = UDim2.new(1, -28, 1, 0)
+	valueLabel.Position = UDim2.new(0, 24, 0, 0)
+	valueLabel.BackgroundTransparency = 1
+	valueLabel.Text = "N/A"
+	valueLabel.Font = Enum.Font.GothamBold
+	valueLabel.TextSize = 11
+	valueLabel.TextColor3 = color or CONFIG.Colors.TextPrimary
+	valueLabel.TextXAlignment = Enum.TextXAlignment.Left
+	valueLabel.Parent = card
+
+	return card
+end
+
+local FriendStatus = CreateFriendStat("FriendStatus", "🔗", CONFIG.Colors.TextMuted)
+FriendStatus.Parent = FriendGrid
+
+local FriendMutual = CreateFriendStat("MutualFriends", "👥", CONFIG.Colors.TextMuted)
+FriendMutual.Parent = FriendGrid
+
+local FriendSince = CreateFriendStat("FriendSince", "📅", CONFIG.Colors.TextMuted)
+FriendSince.Parent = FriendGrid
+
+local FriendBlockStatus = CreateFriendStat("BlockStatus", "🚫", CONFIG.Colors.TextMuted)
+FriendBlockStatus.Parent = FriendGrid
+
+-- PLAYER INSPECTOR
+local InspectorSection = Instance.new("Frame")
+InspectorSection.Name = "InspectorSection"
+InspectorSection.Size = UDim2.new(1, -28, 0, 235)
+InspectorSection.Position = UDim2.new(0, 14, 0, 1376)
+InspectorSection.BackgroundColor3 = CONFIG.Colors.Surface
+InspectorSection.BorderSizePixel = 0
+InspectorSection.Parent = ActionContent
+
+CreateCorner(InspectorSection, 12)
+
+local InspectorTitle = Instance.new("TextLabel")
+InspectorTitle.Size = UDim2.new(1, -20, 0, 30)
+InspectorTitle.Position = UDim2.new(0, 14, 0, 10)
+InspectorTitle.BackgroundTransparency = 1
+InspectorTitle.Text = "🧠  ADVANCED INSPECTOR"
+InspectorTitle.Font = Enum.Font.GothamBold
+InspectorTitle.TextSize = 13
+InspectorTitle.TextColor3 = CONFIG.Colors.Info
+InspectorTitle.TextXAlignment = Enum.TextXAlignment.Left
+InspectorTitle.Parent = InspectorSection
+
+local InspectorGrid = Instance.new("Frame")
+InspectorGrid.Size = UDim2.new(1, -20, 0, 112)
+InspectorGrid.Position = UDim2.new(0, 10, 0, 42)
+InspectorGrid.BackgroundTransparency = 1
+InspectorGrid.Parent = InspectorSection
+
+local InspectorLayout = Instance.new("UIGridLayout")
+InspectorLayout.CellSize = UDim2.new(0.48, 0, 0, 34)
+InspectorLayout.CellPadding = UDim2.new(0.04, 0, 0, 6)
+InspectorLayout.Parent = InspectorGrid
+
+local function CreateInspectorStat(name, icon)
+	local card = Instance.new("Frame")
+	card.Name = name
+	card.BackgroundColor3 = CONFIG.Colors.Background
+	card.BorderSizePixel = 0
+	CreateCorner(card, 8)
+
+	local iconLabel = Instance.new("TextLabel")
+	iconLabel.Size = UDim2.new(0, 24, 1, 0)
+	iconLabel.Position = UDim2.new(0, 7, 0, 0)
+	iconLabel.BackgroundTransparency = 1
+	iconLabel.Text = icon
+	iconLabel.Font = Enum.Font.Gotham
+	iconLabel.TextSize = 12
+	iconLabel.Parent = card
+
+	local value = Instance.new("TextLabel")
+	value.Name = "Value"
+	value.Size = UDim2.new(1, -36, 1, 0)
+	value.Position = UDim2.new(0, 32, 0, 0)
+	value.BackgroundTransparency = 1
+	value.Text = "N/A"
+	value.Font = Enum.Font.GothamBold
+	value.TextSize = 10
+	value.TextColor3 = CONFIG.Colors.TextPrimary
+	value.TextXAlignment = Enum.TextXAlignment.Left
+	value.TextTruncate = Enum.TextTruncate.AtEnd
+	value.Parent = card
+
+	return card
+end
+
+local InspectorRig = CreateInspectorStat("Rig", "🧍")
+InspectorRig.Parent = InspectorGrid
+local InspectorParts = CreateInspectorStat("Parts", "🧩")
+InspectorParts.Parent = InspectorGrid
+local InspectorTools = CreateInspectorStat("Tools", "🛠")
+InspectorTools.Parent = InspectorGrid
+local InspectorAccessories = CreateInspectorStat("Accessories", "🎩")
+InspectorAccessories.Parent = InspectorGrid
+local InspectorVelocity = CreateInspectorStat("Velocity", "💨")
+InspectorVelocity.Parent = InspectorGrid
+local InspectorPing = CreateInspectorStat("Ping", "📡")
+InspectorPing.Parent = InspectorGrid
+local InspectorAccountAge = CreateInspectorStat("AccountAge", "📅")
+InspectorAccountAge.Parent = InspectorGrid
+local InspectorAttributes = CreateInspectorStat("Attributes", "🏷")
+InspectorAttributes.Parent = InspectorGrid
+
+local InspectorStatus = Instance.new("TextLabel")
+InspectorStatus.Name = "Status"
+InspectorStatus.Size = UDim2.new(1, -28, 0, 22)
+InspectorStatus.Position = UDim2.new(0, 14, 1, -58)
+InspectorStatus.BackgroundTransparency = 1
+InspectorStatus.Text = "Live inspection enabled"
+InspectorStatus.Font = Enum.Font.Gotham
+InspectorStatus.TextSize = 10
+InspectorStatus.TextColor3 = CONFIG.Colors.TextMuted
+InspectorStatus.TextXAlignment = Enum.TextXAlignment.Left
+InspectorStatus.Parent = InspectorSection
+
+-- INIT INSPECTOR
+InspectorRig.Value.Text = "N/A"
+InspectorParts.Value.Text = "N/A"
+InspectorTools.Value.Text = "N/A"
+InspectorAccessories.Value.Text = "N/A"
+InspectorVelocity.Value.Text = "N/A"
+InspectorPing.Value.Text = "N/A"
+InspectorAccountAge.Value.Text = "N/A"
+InspectorAttributes.Value.Text = "N/A"
+InspectorStatus.Text = "Live inspection enabled"
+
+local CopyProfileButton = Instance.new("TextButton")
+CopyProfileButton.Name = "CopyProfile"
+CopyProfileButton.Size = UDim2.new(0.47, 0, 0, 30)
+CopyProfileButton.Position = UDim2.new(0.03, 0, 1, -38)
+CopyProfileButton.BackgroundColor3 = CONFIG.Colors.Accent
+CopyProfileButton.Text = "Copy Profile"
+CopyProfileButton.Font = Enum.Font.GothamBold
+CopyProfileButton.TextSize = 11
+CopyProfileButton.TextColor3 = CONFIG.Colors.TextPrimary
+CopyProfileButton.AutoButtonColor = false
+CopyProfileButton.Parent = InspectorSection
+CreateCorner(CopyProfileButton, 8)
+CreateGradient(CopyProfileButton, CONFIG.Colors.Accent, CONFIG.Colors.AccentGlow)
+
+local RefreshInspectorButton = Instance.new("TextButton")
+RefreshInspectorButton.Name = "RefreshInspector"
+RefreshInspectorButton.Size = UDim2.new(0.47, 0, 0, 30)
+RefreshInspectorButton.Position = UDim2.new(0.50, 0, 1, -38)
+RefreshInspectorButton.BackgroundColor3 = CONFIG.Colors.SurfaceHover
+RefreshInspectorButton.Text = "Refresh Data"
+RefreshInspectorButton.Font = Enum.Font.GothamBold
+RefreshInspectorButton.TextSize = 11
+RefreshInspectorButton.TextColor3 = CONFIG.Colors.TextSecondary
+RefreshInspectorButton.AutoButtonColor = false
+RefreshInspectorButton.Parent = InspectorSection
+CreateCorner(RefreshInspectorButton, 8)
+
+-- SERVER HOPPER
+local ServerSection = Instance.new("Frame")
+ServerSection.Name = "ServerSection"
+ServerSection.Size = UDim2.new(1, -28, 0, 130)
+ServerSection.Position = UDim2.new(0, 14, 0, 1622)
+ServerSection.BackgroundColor3 = CONFIG.Colors.Surface
+ServerSection.BorderSizePixel = 0
+ServerSection.Parent = ActionContent
+
+CreateCorner(ServerSection, 12)
+
+local ServerTitle = Instance.new("TextLabel")
+ServerTitle.Name = "Title"
+ServerTitle.Size = UDim2.new(1, -20, 0, 30)
+ServerTitle.Position = UDim2.new(0, 14, 0, 10)
+ServerTitle.BackgroundTransparency = 1
+ServerTitle.Text = "🌐  SERVER HOPPER"
+ServerTitle.Font = Enum.Font.GothamBold
+ServerTitle.TextSize = 13
+ServerTitle.TextColor3 = CONFIG.Colors.Warning
+ServerTitle.TextXAlignment = Enum.TextXAlignment.Left
+ServerTitle.Parent = ServerSection
+
+local ServerInfo = Instance.new("TextLabel")
+ServerInfo.Name = "Info"
+ServerInfo.Size = UDim2.new(1, -20, 0, 18)
+ServerInfo.Position = UDim2.new(0, 14, 0, 38)
+ServerInfo.BackgroundTransparency = 1
+ServerInfo.Text = "Teleport to a different server"
+ServerInfo.Font = Enum.Font.Gotham
+ServerInfo.TextSize = 11
+ServerInfo.TextColor3 = CONFIG.Colors.TextMuted
+ServerInfo.TextXAlignment = Enum.TextXAlignment.Left
+ServerInfo.Parent = ServerSection
+
+local ServerGrid = Instance.new("Frame")
+ServerGrid.Size = UDim2.new(1, -20, 0, 38)
+ServerGrid.Position = UDim2.new(0, 10, 0, 60)
+ServerGrid.BackgroundTransparency = 1
+ServerGrid.Parent = ServerSection
+
+local ServerLayout = Instance.new("UIGridLayout")
+ServerLayout.CellSize = UDim2.new(0.32, -4, 0, 34)
+ServerLayout.CellPadding = UDim2.new(0.02, 0, 0, 6)
+ServerLayout.Parent = ServerGrid
+
+local function CreateServerButton(text, color)
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.new(1, 0, 1, 0)
+	btn.BackgroundColor3 = color or CONFIG.Colors.Background
+	btn.Text = text
+	btn.Font = Enum.Font.GothamBold
+	btn.TextSize = 11
+	btn.TextColor3 = CONFIG.Colors.TextPrimary
+	btn.AutoButtonColor = false
+	CreateCorner(btn, 8)
+	return btn
+end
+
+local BtnSmallServer = CreateServerButton("Small Server", CONFIG.Colors.Accent)
+BtnSmallServer.Parent = ServerGrid
+CreateGradient(BtnSmallServer, CONFIG.Colors.Accent, CONFIG.Colors.AccentGlow)
+
+local BtnRandomServer = CreateServerButton("Random", CONFIG.Colors.Background)
+BtnRandomServer.Parent = ServerGrid
+
+local BtnRejoin = CreateServerButton("Rejoin", CONFIG.Colors.Success)
+BtnRejoin.Parent = ServerGrid
+
+local ServerStatus = Instance.new("TextLabel")
+ServerStatus.Name = "Status"
+ServerStatus.Size = UDim2.new(1, -20, 0, 18)
+ServerStatus.Position = UDim2.new(0, 14, 1, -22)
+ServerStatus.BackgroundTransparency = 1
+ServerStatus.Text = "Ready to hop"
+ServerStatus.Font = Enum.Font.Gotham
+ServerStatus.TextSize = 10
+ServerStatus.TextColor3 = CONFIG.Colors.TextMuted
+ServerStatus.TextXAlignment = Enum.TextXAlignment.Left
+ServerStatus.Parent = ServerSection
+
+-- STATE
+local State = {
+	SelectedPlayer = nil,
+	IsMinimized = false,
+	IsSpying = false,
+	SpyMode = "Follow",
+	SpyOrbitDistance = 15,
+	SpyOverlayEnabled = false,
+	SpyFov = 70,
+	TeleportTween = true,
+	FollowPlayer = false,
+	AutoRefresh = true,
+	ESP = false,
+	Highlight = false,
+	OriginalCamera = {
+		Subject = nil,
+		Type = Enum.CameraType.Custom,
+		CFrame = nil,
+		FieldOfView = 70,
+	},
+	Connections = {},
+	ButtonCache = {},
+	ESPObjects = {},
+	HighlightObjects = {},
+}
+
+local PlayerJoinTimes = {}
+local ServerStartTime = os.time()
+
+-- DRAGGING
+local function MakeDraggable(guiObject, dragHandle)
+	local dragging = false
+	local dragInput, dragStart, startPos
+
+	dragHandle.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = true
+			dragStart = input.Position
+			startPos = guiObject.Position
+			input.Changed:Connect(function()
+				if input.UserInputState == Enum.UserInputState.End then
+					dragging = false
+				end
+			end)
+		end
+	end)
+
+	dragHandle.InputChanged:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+			dragInput = input
+		end
+	end)
+
+	UserInputService.InputChanged:Connect(function(input)
+		if input == dragInput and dragging then
+			local delta = input.Position - dragStart
+			Tween(guiObject, {
+				Position = UDim2.new(
+					startPos.X.Scale, startPos.X.Offset + delta.X,
+					startPos.Y.Scale, startPos.Y.Offset + delta.Y
+				)
+			}, CONFIG.Animations.Quick)
+		end
+	end)
+end
+
+MakeDraggable(MainFrame, TopBar)
+MakeDraggable(ActionPanel, ActionTopBar)
+-- SPY HUD DRAG
+local SpyHudDrag = Instance.new("Frame")
+SpyHudDrag.Name = "DragHandle"
+SpyHudDrag.Size = UDim2.new(1, 0, 0, 28)
+SpyHudDrag.Position = UDim2.new(0, 0, 0, 0)
+SpyHudDrag.BackgroundTransparency = 1
+SpyHudDrag.Parent = SpyHud
+MakeDraggable(SpyHud, SpyHudDrag)
+
+-- HOVER EFFECTS
+local function SetupButtonHover(button, normalColor, hoverColor, clickColor)
+	normalColor = normalColor or button.BackgroundColor3
+	hoverColor = hoverColor or CONFIG.Colors.SurfaceHover
+	clickColor = clickColor or CONFIG.Colors.Accent
+
+	button.MouseEnter:Connect(function()
+		Tween(button, { BackgroundColor3 = hoverColor }, CONFIG.Animations.Quick)
+		PlaySound(CONFIG.Sounds.Hover, 0.1)
+	end)
+
+	button.MouseLeave:Connect(function()
+		Tween(button, { BackgroundColor3 = normalColor }, CONFIG.Animations.Quick)
+	end)
+
+	button.MouseButton1Down:Connect(function()
+		Tween(button, { BackgroundColor3 = clickColor }, CONFIG.Animations.Quick)
+	end)
+
+	button.MouseButton1Up:Connect(function()
+		Tween(button, { BackgroundColor3 = hoverColor }, CONFIG.Animations.Quick)
+		PlaySound(CONFIG.Sounds.Click, 0.2)
+	end)
+end
+
+SetupButtonHover(MinimizeButton, CONFIG.Colors.SurfaceHover, Color3.fromRGB(60, 60, 70))
+SetupButtonHover(CloseButton, Color3.fromRGB(239, 68, 68), Color3.fromRGB(255, 90, 90))
+SetupButtonHover(ActionClose, Color3.fromRGB(239, 68, 68), Color3.fromRGB(255, 90, 90))
+SetupButtonHover(CopyIdButton, CONFIG.Colors.Accent, CONFIG.Colors.AccentHover)
+SetupButtonHover(CopyNameButton, CONFIG.Colors.SurfaceHover, Color3.fromRGB(60, 60, 70))
+SetupButtonHover(SpyToggle, CONFIG.Colors.Success, Color3.fromRGB(50, 210, 100))
+SetupButtonHover(SpyOverlay, CONFIG.Colors.SurfaceHover, Color3.fromRGB(60, 60, 70))
+SetupButtonHover(TweenToggle, CONFIG.Colors.Accent, CONFIG.Colors.AccentHover)
+SetupButtonHover(FollowToggle, CONFIG.Colors.SurfaceHover, Color3.fromRGB(60, 60, 70))
+SetupButtonHover(HudStop, CONFIG.Colors.Danger, Color3.fromRGB(255, 90, 90))
+SetupButtonHover(RefreshBtn, CONFIG.Colors.SurfaceHover, Color3.fromRGB(60, 60, 70))
+SetupButtonHover(AutoRefreshBtn, CONFIG.Colors.Success, Color3.fromRGB(50, 210, 100))
+SetupButtonHover(BtnESP, CONFIG.Colors.Background, Color3.fromRGB(60, 60, 70))
+SetupButtonHover(BtnHighlight, CONFIG.Colors.Background, Color3.fromRGB(60, 60, 70))
+SetupButtonHover(BtnView, CONFIG.Colors.Accent, CONFIG.Colors.AccentHover)
+SetupButtonHover(BtnSmallServer, CONFIG.Colors.Accent, CONFIG.Colors.AccentHover)
+SetupButtonHover(BtnRandomServer, CONFIG.Colors.Background, Color3.fromRGB(60, 60, 70))
+SetupButtonHover(BtnRejoin, CONFIG.Colors.Success, Color3.fromRGB(50, 210, 100))
+SetupButtonHover(CopyProfileButton, CONFIG.Colors.Accent, CONFIG.Colors.AccentHover)
+SetupButtonHover(RefreshInspectorButton, CONFIG.Colors.SurfaceHover, Color3.fromRGB(60, 60, 70))
+SetupButtonHover(MainTabButton, CONFIG.Colors.Accent, CONFIG.Colors.AccentHover)
+SetupButtonHover(NewTabButton, CONFIG.Colors.Background, CONFIG.Colors.SurfaceHover)
+SetupButtonHover(WorldTabButton, CONFIG.Colors.Background, CONFIG.Colors.SurfaceHover)
+SetupButtonHover(DiagnosticsTabButton, CONFIG.Colors.Background, CONFIG.Colors.SurfaceHover)
+
+local ActiveTab = "Main"
+
+local function SetTabButtonState(button, active)
+	if active then
+		Tween(button, {BackgroundColor3 = CONFIG.Colors.Accent}, CONFIG.Animations.Standard)
+		button.TextColor3 = CONFIG.Colors.TextPrimary
+	else
+		Tween(button, {BackgroundColor3 = CONFIG.Colors.Background}, CONFIG.Animations.Standard)
+		button.TextColor3 = CONFIG.Colors.TextSecondary
+	end
+end
+
+local function SwitchMainTab(tabName)
+	ActiveTab = tabName
+	MainPage.Visible = tabName == "Main"
+	NewPage.Visible = tabName == "Tools"
+	WorldPage.Visible = tabName == "World"
+	DiagnosticsPage.Visible = tabName == "Diagnostics"
+
+	SetTabButtonState(MainTabButton, tabName == "Main")
+	SetTabButtonState(NewTabButton, tabName == "Tools")
+	SetTabButtonState(WorldTabButton, tabName == "World")
+	SetTabButtonState(DiagnosticsTabButton, tabName == "Diagnostics")
+end
+
+MainTabButton.MouseButton1Click:Connect(function()
+	SwitchMainTab("Main")
+end)
+
+NewTabButton.MouseButton1Click:Connect(function()
+	SwitchMainTab("Tools")
+end)
+
+WorldTabButton.MouseButton1Click:Connect(function()
+	SwitchMainTab("World")
+end)
+
+DiagnosticsTabButton.MouseButton1Click:Connect(function()
+	SwitchMainTab("Diagnostics")
+end)
+
+SwitchMainTab("Main")
+
+-- PLAYER LIST
+-- PLAYER ACTIONS
+task.spawn(function()
+
+local UpdateActionPanel
+local ShowActionPanel
+local StopSpying
+local StopFollowing
+
+local function GetPlayerThumbnail(userId)
+	return string.format("https://www.roblox.com/headshot-thumbnail/image?userId=%d&width=150&height=150&format=png", userId)
+end
+
+local function CreatePlayerButton(player)
+	local button = Instance.new("TextButton")
+	button.Name = player.Name
+	button.Size = UDim2.new(1, 0, 0, 54)
+	button.BackgroundColor3 = CONFIG.Colors.Background
+	button.Text = ""
+	button.AutoButtonColor = false
+	button.LayoutOrder = player.Name:lower():byte(1)
+	button.Parent = PlayerList
+
+	CreateCorner(button, 10)
+
+	local avatar = Instance.new("ImageLabel")
+	avatar.Size = UDim2.new(0, 42, 0, 42)
+	avatar.Position = UDim2.new(0, 8, 0.5, -21)
+	avatar.BackgroundColor3 = CONFIG.Colors.Surface
+	avatar.BorderSizePixel = 0
+	avatar.Image = GetPlayerThumbnail(player.UserId)
+	avatar.Parent = button
+	CreateCorner(avatar, 21)
+
+	-- Avatar ring
+	local avatarRing = Instance.new("UIStroke")
+	avatarRing.Color = CONFIG.Colors.Border
+	avatarRing.Thickness = 1.5
+	avatarRing.Transparency = 0.5
+	avatarRing.Parent = avatar
+
+	local nameLabel = Instance.new("TextLabel")
+	nameLabel.Size = UDim2.new(1, -64, 0, 22)
+	nameLabel.Position = UDim2.new(0, 56, 0, 5)
+	nameLabel.BackgroundTransparency = 1
+	nameLabel.Text = player.DisplayName ~= player.Name and string.format("%s (@%s)", player.DisplayName, player.Name) or player.Name
+	nameLabel.Font = Enum.Font.GothamBold
+	nameLabel.TextSize = 14
+	nameLabel.TextColor3 = CONFIG.Colors.TextPrimary
+	nameLabel.TextXAlignment = Enum.TextXAlignment.Left
+	nameLabel.Parent = button
+
+	local statusLabel = Instance.new("TextLabel")
+	statusLabel.Size = UDim2.new(1, -64, 0, 16)
+	statusLabel.Position = UDim2.new(0, 56, 0, 28)
+	statusLabel.BackgroundTransparency = 1
+	statusLabel.Text = player == LocalPlayer and "You" or (player.Team and player.Team.Name or "No Team")
+	statusLabel.Font = Enum.Font.Gotham
+	statusLabel.TextSize = 11
+	statusLabel.TextColor3 = player.Team and player.Team.TeamColor.Color or CONFIG.Colors.TextMuted
+	statusLabel.TextXAlignment = Enum.TextXAlignment.Left
+	statusLabel.Parent = button
+
+	-- Online indicator
+	local onlineDot = Instance.new("Frame")
+	onlineDot.Size = UDim2.new(0, 8, 0, 8)
+	onlineDot.Position = UDim2.new(0, 2, 0, 2)
+	onlineDot.BackgroundColor3 = CONFIG.Colors.Success
+	onlineDot.BorderSizePixel = 0
+	onlineDot.ZIndex = avatar.ZIndex + 1
+	onlineDot.Parent = avatar
+	CreateCorner(onlineDot, 4)
+
+	-- Hover effects
+	button.MouseEnter:Connect(function()
+		Tween(button, { BackgroundColor3 = CONFIG.Colors.SurfaceHover }, CONFIG.Animations.Quick)
+		Tween(avatarRing, { Color = CONFIG.Colors.Accent }, CONFIG.Animations.Quick)
+	end)
+
+	button.MouseLeave:Connect(function()
+		Tween(button, { BackgroundColor3 = CONFIG.Colors.Background }, CONFIG.Animations.Quick)
+		Tween(avatarRing, { Color = CONFIG.Colors.Border }, CONFIG.Animations.Quick)
+	end)
+
+	button.MouseButton1Click:Connect(function()
+		PlaySound(CONFIG.Sounds.Click, 0.2)
+		State.SelectedPlayer = player
+		UpdateActionPanel(player)
+		ShowActionPanel()
+	end)
+
+	State.ButtonCache[player] = button
+	return button
+end
+
+local function UpdatePlayerList()
+	-- Clear existing buttons safely
+	for _, child in pairs(PlayerList:GetChildren()) do
+		if child:IsA("TextButton") then
+			child:Destroy()
+		end
+	end
+	State.ButtonCache = {}
+
+	local searchTerm = SearchBox.Text:lower()
+	local count = 0
+	local total = #Players:GetPlayers()
+
+	for _, player in pairs(Players:GetPlayers()) do
+		local nameMatch = player.Name:lower():find(searchTerm, 1, true)
+		local displayMatch = player.DisplayName:lower():find(searchTerm, 1, true)
+
+		if searchTerm == "" or nameMatch or displayMatch then
+			CreatePlayerButton(player)
+			count += 1
+		end
+	end
+
+	CountLabel.Text = string.format("%d/%d", count, total)
+	EmptyState.Visible = count == 0
+end
+
+-- SEARCH DEBOUNCE
+local searchDebounce = false
+SearchBox:GetPropertyChangedSignal("Text"):Connect(function()
+	ClearButton.Visible = SearchBox.Text ~= ""
+	searchDebounce = true
+	task.delay(0.15, function()
+		if searchDebounce then
+			searchDebounce = false
+			UpdatePlayerList()
+		end
+	end)
+end)
+
+ClearButton.MouseButton1Click:Connect(function()
+	SearchBox.Text = ""
+	PlaySound(CONFIG.Sounds.Click, 0.2)
+end)
+
+RefreshBtn.MouseButton1Click:Connect(function()
+	UpdatePlayerList()
+	PlaySound(CONFIG.Sounds.Click, 0.2)
+end)
+
+-- ACTION LOGIC
+UpdateActionPanel = function(player)
+	if not player then return end
+
+	-- Profile
+	AvatarImage.Image = GetPlayerThumbnail(player.UserId)
+	ProfileName.Text = player.DisplayName
+	ProfileUser.Text = "@" .. player.Name
+	ProfileId.Text = "ID: " .. player.UserId
+
+	-- Update status
+	local function UpdateStatus()
+		if player == LocalPlayer then
+			ProfileStatus.Text = "Status: You"
+			ProfileStatus.TextColor3 = CONFIG.Colors.Accent
+		else
+			local char = player.Character
+			if char and char:FindFirstChild("Humanoid") then
+				local humanoid = char.Humanoid
+				if humanoid.Health > 0 then
+					ProfileStatus.Text = "Status: Alive"
+					ProfileStatus.TextColor3 = CONFIG.Colors.Success
+				else
+					ProfileStatus.Text = "Status: Dead"
+					ProfileStatus.TextColor3 = CONFIG.Colors.Danger
+				end
+			else
+				ProfileStatus.Text = "Status: Loading..."
+				ProfileStatus.TextColor3 = CONFIG.Colors.TextMuted
+			end
+		end
+	end
+
+	-- Stats
+	local function UpdateStats()
+		if not State.SelectedPlayer or State.SelectedPlayer ~= player then return end
+
+		local char = player.Character
+		local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+
+		if humanoid then
+			StatHealth.Value.Text = string.format("%.0f/%.0f HP", humanoid.Health, humanoid.MaxHealth)
+		else
+			StatHealth.Value.Text = "N/A"
+		end
+
+		if char and char:FindFirstChild("HumanoidRootPart") then
+			local pos = char.HumanoidRootPart.Position
+			StatPosition.Value.Text = string.format("X:%.0f Y:%.0f Z:%.0f", pos.X, pos.Y, pos.Z)
+
+			local myChar = LocalPlayer.Character
+			if myChar and myChar:FindFirstChild("HumanoidRootPart") then
+				local dist = (pos - myChar.HumanoidRootPart.Position).Magnitude
+				StatDistance.Value.Text = string.format("%.1f studs", dist)
+			else
+				StatDistance.Value.Text = "N/A"
+			end
+		else
+			StatPosition.Value.Text = "N/A"
+			StatDistance.Value.Text = "N/A"
+		end
+
+		StatTeam.Value.Text = player.Team and player.Team.Name or "Neutral"
+		StatTeam.Value.TextColor3 = player.Team and player.Team.TeamColor.Color or CONFIG.Colors.TextMuted
+
+		UpdateStatus()
+	end
+
+	-- Clean old connections
+	for _, conn in pairs(State.Connections) do
+		conn:Disconnect()
+	end
+	State.Connections = {}
+
+	-- Update stats loop
+	table.insert(State.Connections, RunService.Heartbeat:Connect(UpdateStats))
+
+	-- Update on character changes
+	table.insert(State.Connections, player.CharacterAdded:Connect(UpdateStats))
+
+	UpdateStats()
+
+	-- Inventory Inspector Logic
+	local function UpdateInventory()
+		if not State.SelectedPlayer or State.SelectedPlayer ~= player then return end
+		for _, child in pairs(InventoryList:GetChildren()) do
+			if child:IsA("Frame") then child:Destroy() end
+		end
+		local char = player.Character
+		local backpack = player:FindFirstChild("Backpack")
+		local hasItems = false
+		local toolNames = {}
+		if char then
+			for _, tool in pairs(char:GetChildren()) do
+				if tool:IsA("Tool") then
+					toolNames[tool.Name] = true
+					CreateToolCard(tool.Name, true).Parent = InventoryList
+					hasItems = true
+				end
+			end
+		end
+		if backpack then
+			for _, tool in pairs(backpack:GetChildren()) do
+				if tool:IsA("Tool") and not toolNames[tool.Name] then
+					CreateToolCard(tool.Name, false).Parent = InventoryList
+					hasItems = true
+				end
+			end
+		end
+		InventoryEmpty.Visible = not hasItems
+	end
+
+	-- Session Tracker Logic
+	local function UpdateSession()
+		if not State.SelectedPlayer or State.SelectedPlayer ~= player then return end
+		local joinTime = PlayerJoinTimes[player]
+		if joinTime then
+			local joinedDate = os.date("%H:%M:%S", joinTime)
+			SessionJoined.Text = "Joined At: " .. joinedDate
+			local elapsed = os.time() - joinTime
+			local hrs = math.floor(elapsed / 3600)
+			local mins = math.floor((elapsed % 3600) / 60)
+			local secs = elapsed % 60
+			SessionDuration.Text = string.format("Session Time: %02d:%02d:%02d", hrs, mins, secs)
+		else
+			SessionJoined.Text = "Joined At: --:--:--"
+			SessionDuration.Text = "Session Time: 00:00:00"
+		end
+		local serverElapsed = os.time() - ServerStartTime
+		local sHrs = math.floor(serverElapsed / 3600)
+		local sMins = math.floor((serverElapsed % 3600) / 60)
+		local sSecs = serverElapsed % 60
+		SessionServer.Text = string.format("Server Uptime: %02d:%02d:%02d", sHrs, sMins, sSecs)
+	end
+
+	-- Animation Monitor Logic
+	local function UpdateAnimation()
+		if not State.SelectedPlayer or State.SelectedPlayer ~= player then return end
+		local char = player.Character
+		local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+		if humanoid then
+			AnimSpeed.Value.Text = tostring(math.floor(humanoid.WalkSpeed + 0.5)) .. " studs/s"
+			AnimJump.Value.Text = tostring(math.floor(humanoid.JumpPower + 0.5)) .. " power"
+			AnimState.Value.Text = (tostring(humanoid:GetState()):gsub("Enum.HumanoidStateType.", ""))
+			local animator = humanoid:FindFirstChildOfClass("Animator")
+			if animator then
+				local playing = animator:GetPlayingAnimationTracks()
+				if #playing > 0 then
+					local current = playing[1]
+					local animName = current.Name
+					if animName == "" then animName = "Unnamed Track" end
+					AnimCurrent.Value.Text = animName
+				else
+					AnimCurrent.Value.Text = "Idle / None"
+				end
+			else
+				AnimCurrent.Value.Text = "No Animator"
+			end
+		else
+			AnimSpeed.Value.Text = "N/A"
+			AnimJump.Value.Text = "N/A"
+			AnimState.Value.Text = "N/A"
+			AnimCurrent.Value.Text = "N/A"
+		end
+	end
+
+	-- Outfit Viewer Logic (NEW)
+	local function UpdateOutfit()
+		if not State.SelectedPlayer or State.SelectedPlayer ~= player then return end
+		for _, child in pairs(OutfitList:GetChildren()) do
+			if child:IsA("Frame") then child:Destroy() end
+		end
+		outfitCardCounter = 0
+		local hasItems = false
+		local char = player.Character
+		if char then
+			-- Shirt
+			local shirt = char:FindFirstChildOfClass("Shirt")
+			if shirt then
+				CreateOutfitCard(shirt.Name ~= "" and shirt.Name or "Shirt", "Shirt").Parent = OutfitList
+				hasItems = true
+			end
+			-- Pants
+			local pants = char:FindFirstChildOfClass("Pants")
+			if pants then
+				CreateOutfitCard(pants.Name ~= "" and pants.Name or "Pants", "Pants").Parent = OutfitList
+				hasItems = true
+			end
+			-- T-Shirt
+			local tshirt = char:FindFirstChildOfClass("ShirtGraphic")
+			if tshirt then
+				CreateOutfitCard(tshirt.Name ~= "" and tshirt.Name or "T-Shirt", "T-Shirt").Parent = OutfitList
+				hasItems = true
+			end
+			-- Accessories
+			for _, child in pairs(char:GetChildren()) do
+				if child:IsA("Accessory") then
+					local accType = "Accessory"
+					if child.AccessoryType then
+						local at = (tostring(child.AccessoryType):gsub("Enum.AccessoryType.", ""))
+						if at == "Hat" then accType = "Hat"
+						elseif at == "Hair" then accType = "Hair"
+						elseif at == "Face" then accType = "Face"
+						end
+					end
+					CreateOutfitCard(child.Name, accType).Parent = OutfitList
+					hasItems = true
+				end
+			end
+			-- Body Colors
+			local bodyColors = char:FindFirstChildOfClass("BodyColors")
+			if bodyColors then
+				CreateOutfitCard("Body Colors", "BodyColor").Parent = OutfitList
+				hasItems = true
+			end
+		end
+		OutfitEmpty.Visible = not hasItems
+	end
+
+	-- Friend Checker Logic (NEW)
+	local function UpdateFriendStatus()
+		if not State.SelectedPlayer or State.SelectedPlayer ~= player then return end
+		if player == LocalPlayer then
+			FriendStatus.Value.Text = "You"
+			FriendStatus.Value.TextColor3 = CONFIG.Colors.Accent
+			FriendMutual.Value.Text = "N/A"
+			FriendMutual.Value.TextColor3 = CONFIG.Colors.TextMuted
+			FriendSince.Value.Text = "N/A"
+			FriendSince.Value.TextColor3 = CONFIG.Colors.TextMuted
+			FriendBlockStatus.Value.Text = "N/A"
+			FriendBlockStatus.Value.TextColor3 = CONFIG.Colors.TextMuted
+			return
+		end
+
+		local success, isFriend = pcall(function()
+			return LocalPlayer:IsFriendsWith(player.UserId)
+		end)
+		if success and isFriend then
+			FriendStatus.Value.Text = "Friends"
+			FriendStatus.Value.TextColor3 = CONFIG.Colors.Success
+		else
+			FriendStatus.Value.Text = "Not Friends"
+			FriendStatus.Value.TextColor3 = CONFIG.Colors.TextMuted
+		end
+
+		local success2, isBlocked = pcall(function()
+			return LocalPlayer:IsBlockedWith(player.UserId)
+		end)
+		if success2 and isBlocked then
+			FriendBlockStatus.Value.Text = "Blocked"
+			FriendBlockStatus.Value.TextColor3 = CONFIG.Colors.Danger
+		else
+			FriendBlockStatus.Value.Text = "Not Blocked"
+			FriendBlockStatus.Value.TextColor3 = CONFIG.Colors.TextMuted
+		end
+
+		FriendMutual.Value.Text = "Check in-game"
+		FriendMutual.Value.TextColor3 = CONFIG.Colors.TextMuted
+		FriendSince.Value.Text = "Check in-game"
+		FriendSince.Value.TextColor3 = CONFIG.Colors.TextMuted
+	end
+
+	-- Advanced Inspector Logic
+	local function UpdateInspector()
+		if not State.SelectedPlayer or State.SelectedPlayer ~= player then return end
+		local char = player.Character
+		local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+		local root = char and char:FindFirstChild("HumanoidRootPart")
+
+		if humanoid then
+			InspectorRig.Value.Text = (tostring(humanoid.RigType):gsub("Enum.HumanoidRigType.", ""))
+			local partCount, toolCount, accessoryCount = 0, 0, 0
+			for _, obj in ipairs(char:GetDescendants()) do
+				if obj:IsA("BasePart") then partCount += 1 end
+				if obj:IsA("Accessory") then accessoryCount += 1 end
+				if obj:IsA("Tool") then toolCount += 1 end
+			end
+			local backpack = player:FindFirstChild("Backpack")
+			if backpack then
+				for _, obj in ipairs(backpack:GetChildren()) do
+					if obj:IsA("Tool") then toolCount += 1 end
+				end
+			end
+			InspectorParts.Value.Text = tostring(partCount) .. " parts"
+			InspectorTools.Value.Text = tostring(toolCount) .. " tools"
+			InspectorAccessories.Value.Text = tostring(accessoryCount) .. " accessories"
+		else
+			InspectorRig.Value.Text = "No Humanoid"
+			InspectorParts.Value.Text, InspectorTools.Value.Text, InspectorAccessories.Value.Text = "N/A", "N/A", "N/A"
+		end
+
+		InspectorVelocity.Value.Text = root and string.format("%.1f studs/s", root.AssemblyLinearVelocity.Magnitude) or "N/A"
+		local pingOk, ping = pcall(function() return math.floor(player:GetNetworkPing() * 1000 + 0.5) end)
+		InspectorPing.Value.Text = pingOk and tostring(ping) .. " ms" or "N/A"
+		InspectorAccountAge.Value.Text = tostring(player.AccountAge) .. " days"
+		local attrCount = 0
+		for _ in pairs(player:GetAttributes()) do attrCount += 1 end
+		if char then for _ in pairs(char:GetAttributes()) do attrCount += 1 end end
+		InspectorAttributes.Value.Text = tostring(attrCount) .. " attributes"
+		local stateText = humanoid and (tostring(humanoid:GetState()):gsub("Enum.HumanoidStateType.", "")) or "No Character"
+		InspectorStatus.Text = string.format("Live inspection • %s • %s", player.Team and player.Team.Name or "Neutral", stateText)
+	end
+
+	table.insert(State.Connections, RunService.Heartbeat:Connect(UpdateInspector))
+	UpdateInspector()
+
+	CopyProfileButton.MouseButton1Click:Connect(function()
+		if State.SelectedPlayer ~= player then return end
+		local char, humanoid = player.Character, player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+		local root = char and char:FindFirstChild("HumanoidRootPart")
+		local pingOk, ping = pcall(function() return math.floor(player:GetNetworkPing() * 1000 + 0.5) end)
+		local rigText = humanoid and (tostring(humanoid.RigType):gsub("Enum.HumanoidRigType.", "")) or "N/A"
+		local profile = string.format("Display Name: %s\nUsername: @%s\nUser ID: %d\nAccount Age: %d days\nTeam: %s\nRig: %s\nHealth: %s\nWalkSpeed: %s\nVelocity: %.1f studs/s\nPing: %s ms", player.DisplayName, player.Name, player.UserId, player.AccountAge, player.Team and player.Team.Name or "Neutral", rigText, humanoid and string.format("%.0f/%.0f", humanoid.Health, humanoid.MaxHealth) or "N/A", humanoid and string.format("%.1f", humanoid.WalkSpeed) or "N/A", root and root.AssemblyLinearVelocity.Magnitude or 0, pingOk and tostring(ping) or "N/A")
+		local ok = pcall(function() setclipboard(profile) end)
+		if ok then
+			CopyProfileButton.Text = "Copied Profile!"
+			CopyProfileButton.BackgroundColor3 = CONFIG.Colors.Success
+			PlaySound(CONFIG.Sounds.Success, 0.2)
+			task.delay(1.2, function() if CopyProfileButton and CopyProfileButton.Parent then CopyProfileButton.Text = "Copy Profile"; CopyProfileButton.BackgroundColor3 = CONFIG.Colors.Accent end end)
+		end
+	end)
+
+	RefreshInspectorButton.MouseButton1Click:Connect(function() UpdateInspector(); PlaySound(CONFIG.Sounds.Click, 0.2) end)
+
+	-- UPDATE HOOKS
+	table.insert(State.Connections, player.CharacterAdded:Connect(function(newChar)
+		task.delay(0.3, UpdateInventory)
+		task.delay(0.3, UpdateAnimation)
+		task.delay(0.3, UpdateOutfit)
+		-- Track tool equip/unequip on character
+		table.insert(State.Connections, newChar.ChildAdded:Connect(function(child)
+			if child:IsA("Tool") then UpdateInventory() end
+			if child:IsA("Accessory") or child:IsA("Shirt") or child:IsA("Pants") or child:IsA("ShirtGraphic") then UpdateOutfit() end
+		end))
+		table.insert(State.Connections, newChar.ChildRemoved:Connect(function(child)
+			if child:IsA("Tool") then UpdateInventory() end
+			if child:IsA("Accessory") or child:IsA("Shirt") or child:IsA("Pants") or child:IsA("ShirtGraphic") then UpdateOutfit() end
+		end))
+	end))
+
+	-- Track current character tools & outfit
+	local currentChar = player.Character
+	if currentChar then
+		table.insert(State.Connections, currentChar.ChildAdded:Connect(function(child)
+			if child:IsA("Tool") then UpdateInventory() end
+			if child:IsA("Accessory") or child:IsA("Shirt") or child:IsA("Pants") or child:IsA("ShirtGraphic") then UpdateOutfit() end
+		end))
+		table.insert(State.Connections, currentChar.ChildRemoved:Connect(function(child)
+			if child:IsA("Tool") then UpdateInventory() end
+			if child:IsA("Accessory") or child:IsA("Shirt") or child:IsA("Pants") or child:IsA("ShirtGraphic") then UpdateOutfit() end
+		end))
+	end
+
+	-- Track backpack changes for live inventory updates
+	local backpack = player:FindFirstChild("Backpack")
+	if backpack then
+		table.insert(State.Connections, backpack.ChildAdded:Connect(UpdateInventory))
+		table.insert(State.Connections, backpack.ChildRemoved:Connect(UpdateInventory))
+	end
+	table.insert(State.Connections, player.ChildAdded:Connect(function(child)
+		if child.Name == "Backpack" then
+			table.insert(State.Connections, child.ChildAdded:Connect(UpdateInventory))
+			table.insert(State.Connections, child.ChildRemoved:Connect(UpdateInventory))
+		end
+	end))
+	table.insert(State.Connections, RunService.Heartbeat:Connect(function()
+		UpdateSession()
+		UpdateAnimation()
+	end))
+
+	UpdateInventory()
+	UpdateSession()
+	UpdateAnimation()
+	UpdateOutfit()
+	UpdateFriendStatus()
+end
+
+ShowActionPanel = function()
+	ActionPanel.Visible = true
+	ActionPanel.Position = UDim2.new(0.5, 270, 0.5, -300)
+	Tween(ActionPanel, { Position = UDim2.new(0.5, 230, 0.5, -300) }, CONFIG.Animations.Standard)
+end
+
+local function HideActionPanel()
+	-- Reset new sections
+	for _, child in pairs(InventoryList:GetChildren()) do
+		if child:IsA("Frame") then child:Destroy() end
+	end
+	InventoryEmpty.Visible = true
+	for _, child in pairs(OutfitList:GetChildren()) do
+		if child:IsA("Frame") then child:Destroy() end
+	end
+	OutfitEmpty.Visible = true
+	SessionJoined.Text = "Joined At: --:--:--"
+	SessionDuration.Text = "Session Time: 00:00:00"
+	AnimCurrent.Value.Text = "N/A"
+	AnimState.Value.Text = "N/A"
+	AnimSpeed.Value.Text = "N/A"
+	AnimJump.Value.Text = "N/A"
+	FriendStatus.Value.Text = "N/A"
+	FriendMutual.Value.Text = "N/A"
+	FriendSince.Value.Text = "N/A"
+	FriendBlockStatus.Value.Text = "N/A"
+	Tween(ActionPanel, { Position = UDim2.new(0.5, 270, 0.5, -300) }, CONFIG.Animations.Standard)
+	task.delay(0.25, function()
+		if ActionPanel then
+			ActionPanel.Visible = false
+		end
+	end)
+end
+
+ActionClose.MouseButton1Click:Connect(function()
+	PlaySound(CONFIG.Sounds.Click, 0.2)
+	HideActionPanel()
+	State.SelectedPlayer = nil
+	StopSpying()
+	StopFollowing()
+end)
+
+CopyIdButton.MouseButton1Click:Connect(function()
+	if State.SelectedPlayer then
+		local success = pcall(function()
+			setclipboard(tostring(State.SelectedPlayer.UserId))
+		end)
+		if success then
+			PlaySound(CONFIG.Sounds.Success, 0.3)
+			local original = CopyIdButton.Text
+			CopyIdButton.Text = "Copied!"
+			CopyIdButton.BackgroundColor3 = CONFIG.Colors.Success
+			task.delay(1.5, function()
+				if CopyIdButton then
+					CopyIdButton.Text = original
+					CopyIdButton.BackgroundColor3 = CONFIG.Colors.Accent
+				end
+			end)
+		end
+	end
+end)
+
+CopyNameButton.MouseButton1Click:Connect(function()
+	if State.SelectedPlayer then
+		local success = pcall(function()
+			setclipboard(State.SelectedPlayer.Name)
+		end)
+		if success then
+			PlaySound(CONFIG.Sounds.Success, 0.3)
+			local original = CopyNameButton.Text
+			CopyNameButton.Text = "Copied!"
+			CopyNameButton.BackgroundColor3 = CONFIG.Colors.Success
+			task.delay(1.5, function()
+				if CopyNameButton then
+					CopyNameButton.Text = original
+					CopyNameButton.BackgroundColor3 = CONFIG.Colors.SurfaceHover
+				end
+			end)
+		end
+	end
+end)
+
+-- ESP & GLOW
+-- SHARED RENDER LOOP
+local ESPUpdateConnection
+local GlowPulseConnection
+
+local function ClearESP()
+	for player, obj in pairs(State.ESPObjects) do
+		if obj then pcall(function() obj:Destroy() end) end
+		State.ESPObjects[player] = nil
+	end
+	-- Failsafe: remove any ESP billboards not tracked in the current table.
+	for _, obj in ipairs(CoreGui:GetChildren()) do
+		if obj.Name == "PM_PremiumESP" then
+			pcall(function() obj:Destroy() end)
+		end
+	end
+end
+
+local function ClearHighlights()
+	for player, obj in pairs(State.HighlightObjects) do
+		if obj then pcall(function() obj:Destroy() end) end
+		State.HighlightObjects[player] = nil
+	end
+	for _, player in ipairs(Players:GetPlayers()) do
+		local char = player.Character
+		if char then
+			for _, obj in ipairs(char:GetChildren()) do
+				if obj.Name == "PM_PremiumGlow" then
+					pcall(function() obj:Destroy() end)
+				end
+			end
+		end
+	end
+end
+
+local function GetPlayerVisualColor(player)
+	if player.Team and player.Team.TeamColor then
+		return player.Team.TeamColor.Color
+	end
+	return CONFIG.Colors.Accent
+end
+
+local function CreateESPForPlayer(player)
+	if player == LocalPlayer or State.ESPObjects[player] then return end
+
+	local billboard = Instance.new("BillboardGui")
+	billboard.Name = "PM_PremiumESP"
+	billboard.AlwaysOnTop = true
+	billboard.LightInfluence = 0
+	billboard.Size = UDim2.new(0, 180, 0, 76)
+	billboard.StudsOffset = Vector3.new(0, 4.2, 0)
+	billboard.MaxDistance = 2500
+	billboard.ResetOnSpawn = false
+
+	local card = Instance.new("Frame")
+	card.Name = "Card"
+	card.Size = UDim2.new(1, 0, 1, 0)
+	card.BackgroundColor3 = Color3.fromRGB(10, 12, 18)
+	card.BackgroundTransparency = 0.16
+	card.BorderSizePixel = 0
+	card.Parent = billboard
+	CreateCorner(card, 10)
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Name = "GlowStroke"
+	stroke.Thickness = 1.5
+	stroke.Transparency = 0.18
+	stroke.Parent = card
+
+	local accent = Instance.new("Frame")
+	accent.Name = "Accent"
+	accent.Size = UDim2.new(0, 4, 1, -14)
+	accent.Position = UDim2.new(0, 7, 0, 7)
+	accent.BorderSizePixel = 0
+	accent.Parent = card
+	CreateCorner(accent, 3)
+
+	local nameLabel = Instance.new("TextLabel")
+	nameLabel.Name = "DisplayName"
+	nameLabel.Size = UDim2.new(1, -24, 0, 21)
+	nameLabel.Position = UDim2.new(0, 17, 0, 7)
+	nameLabel.BackgroundTransparency = 1
+	nameLabel.Font = Enum.Font.GothamBold
+	nameLabel.TextSize = 14
+	nameLabel.TextXAlignment = Enum.TextXAlignment.Left
+	nameLabel.TextStrokeTransparency = 0.65
+	nameLabel.Parent = card
+
+	local userLabel = Instance.new("TextLabel")
+	userLabel.Name = "Username"
+	userLabel.Size = UDim2.new(1, -24, 0, 16)
+	userLabel.Position = UDim2.new(0, 17, 0, 27)
+	userLabel.BackgroundTransparency = 1
+	userLabel.Font = Enum.Font.Gotham
+	userLabel.TextSize = 10
+	userLabel.TextColor3 = CONFIG.Colors.TextSecondary
+	userLabel.TextXAlignment = Enum.TextXAlignment.Left
+	userLabel.Parent = card
+
+	local distanceLabel = Instance.new("TextLabel")
+	distanceLabel.Name = "Distance"
+	distanceLabel.Size = UDim2.new(0.48, 0, 0, 16)
+	distanceLabel.Position = UDim2.new(0, 17, 0, 46)
+	distanceLabel.BackgroundTransparency = 1
+	distanceLabel.Font = Enum.Font.GothamBold
+	distanceLabel.TextSize = 10
+	distanceLabel.TextColor3 = CONFIG.Colors.TextPrimary
+	distanceLabel.TextXAlignment = Enum.TextXAlignment.Left
+	distanceLabel.Parent = card
+
+	local healthLabel = Instance.new("TextLabel")
+	healthLabel.Name = "HealthText"
+	healthLabel.Size = UDim2.new(0.42, 0, 0, 16)
+	healthLabel.Position = UDim2.new(0.58, -10, 0, 46)
+	healthLabel.BackgroundTransparency = 1
+	healthLabel.Font = Enum.Font.GothamBold
+	healthLabel.TextSize = 10
+	healthLabel.TextColor3 = CONFIG.Colors.Success
+	healthLabel.TextXAlignment = Enum.TextXAlignment.Right
+	healthLabel.Parent = card
+
+	local healthBack = Instance.new("Frame")
+	healthBack.Size = UDim2.new(1, -24, 0, 4)
+	healthBack.Position = UDim2.new(0, 17, 1, -10)
+	healthBack.BackgroundColor3 = Color3.fromRGB(40, 45, 55)
+	healthBack.BorderSizePixel = 0
+	healthBack.Parent = card
+	CreateCorner(healthBack, 2)
+
+	local healthFill = Instance.new("Frame")
+	healthFill.Name = "HealthFill"
+	healthFill.Size = UDim2.new(1, 0, 1, 0)
+	healthFill.BackgroundColor3 = CONFIG.Colors.Success
+	healthFill.BorderSizePixel = 0
+	healthFill.Parent = healthBack
+	CreateCorner(healthFill, 2)
+
+	billboard.Parent = CoreGui
+	State.ESPObjects[player] = billboard
+
+	local function update()
+		if not billboard.Parent then return false end
+		local myRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+		local char = player.Character
+		local root = char and char:FindFirstChild("HumanoidRootPart")
+		local head = char and char:FindFirstChild("Head")
+		local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+		local color = GetPlayerVisualColor(player)
+		stroke.Color = color
+		accent.BackgroundColor3 = color
+		nameLabel.TextColor3 = color
+		nameLabel.Text = player.DisplayName
+		userLabel.Text = "@" .. player.Name
+		if root or head then billboard.Adornee = head or root end
+		if myRoot and root then
+			local distance = (root.Position - myRoot.Position).Magnitude
+			-- Automatically raise the ESP farther above the character as distance changes.
+			local automaticOffset = math.clamp(4.2 + (distance / 120), 4.2, 12)
+			billboard.StudsOffset = Vector3.new(0, automaticOffset, 0)
+			distanceLabel.Text = string.format("%.0f studs", distance)
+		else
+			billboard.StudsOffset = Vector3.new(0, 4.2, 0)
+			distanceLabel.Text = "-- studs"
+		end
+		if humanoid and humanoid.MaxHealth > 0 then
+			local pct = math.clamp(humanoid.Health / humanoid.MaxHealth, 0, 1)
+			healthLabel.Text = string.format("%d%%", math.floor(pct * 100 + 0.5))
+			healthFill.Size = UDim2.new(pct, 0, 1, 0)
+			if pct > 0.6 then healthFill.BackgroundColor3 = CONFIG.Colors.Success
+			elseif pct > 0.3 then healthFill.BackgroundColor3 = CONFIG.Colors.Warning
+			else healthFill.BackgroundColor3 = CONFIG.Colors.Danger end
+		end
+		return true
+	end
+	update()
+end
+
+local function CreateHighlightForPlayer(player)
+	if player == LocalPlayer or State.HighlightObjects[player] then return end
+	local highlight = Instance.new("Highlight")
+	highlight.Name = "PM_PremiumGlow"
+	highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	highlight.FillTransparency = 0.72
+	highlight.OutlineTransparency = 0.05
+	highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+	State.HighlightObjects[player] = highlight
+
+	local char = player.Character
+	if char then highlight.Parent = char end
+end
+
+local function UpdateESPAndHighlights()
+	if State.ESP then
+		for _, player in ipairs(Players:GetPlayers()) do CreateESPForPlayer(player) end
+	else ClearESP() end
+	if State.Highlight then
+		for _, player in ipairs(Players:GetPlayers()) do CreateHighlightForPlayer(player) end
+	else ClearHighlights() end
+end
+
+ESPUpdateConnection = RunService.RenderStepped:Connect(function()
+	if not State.ESP then return end
+
+	local myCharacter = LocalPlayer.Character
+	local myRoot = myCharacter and myCharacter:FindFirstChild("HumanoidRootPart")
+
+	for player, billboard in pairs(State.ESPObjects) do
+		if not player:IsDescendantOf(Players) or not billboard or not billboard.Parent then
+			State.ESPObjects[player] = nil
+		else
+			local char = player.Character
+			local root = char and char:FindFirstChild("HumanoidRootPart")
+			local head = char and char:FindFirstChild("Head")
+			local hum = char and char:FindFirstChildOfClass("Humanoid")
+			local card = billboard:FindFirstChild("Card")
+
+			if card then
+				-- Never let a missing optional UI child stop the whole render loop.
+				local color = GetPlayerVisualColor(player)
+				local glowStroke = card:FindFirstChild("GlowStroke")
+				if glowStroke then glowStroke.Color = color end
+
+				local accentBar = card:FindFirstChild("Accent")
+				if accentBar then accentBar.BackgroundColor3 = color end
+
+				local displayName = card:FindFirstChild("DisplayName")
+				if displayName then
+					displayName.TextColor3 = color
+					displayName.Text = player.DisplayName
+				end
+
+				local username = card:FindFirstChild("Username")
+				if username then username.Text = "@" .. player.Name end
+
+				if root or head then billboard.Adornee = head or root end
+
+				local distanceLabel = card:FindFirstChild("Distance")
+				if myRoot and root then
+					local distance = (root.Position - myRoot.Position).Magnitude
+					local automaticOffset = math.clamp(4.2 + (distance / 120), 4.2, 12)
+					billboard.StudsOffset = Vector3.new(0, automaticOffset, 0)
+					if distanceLabel then
+						distanceLabel.Text = string.format("%.0f studs away", distance)
+					end
+				else
+					billboard.StudsOffset = Vector3.new(0, 4.2, 0)
+					if distanceLabel then distanceLabel.Text = "-- studs away" end
+				end
+
+				local healthText = card:FindFirstChild("HealthText")
+				local healthFill = card:FindFirstChild("HealthFill", true)
+				if hum and hum.MaxHealth > 0 then
+					local pct = math.clamp(hum.Health / hum.MaxHealth, 0, 1)
+					if healthText then healthText.Text = string.format("%d%%", math.floor(pct * 100 + 0.5)) end
+					if healthFill then
+						healthFill.Size = UDim2.new(pct, 0, 1, 0)
+						healthFill.BackgroundColor3 = pct > .6 and CONFIG.Colors.Success or (pct > .3 and CONFIG.Colors.Warning or CONFIG.Colors.Danger)
+					end
+				end
+			end
+		end
+	end
+end)
+
+GlowPulseConnection = RunService.RenderStepped:Connect(function()
+	if not State.Highlight then return end
+	local t = os.clock()
+	for player, highlight in pairs(State.HighlightObjects) do
+		if not player:IsDescendantOf(Players) or not highlight then State.HighlightObjects[player] = nil
+		else
+			local color = GetPlayerVisualColor(player)
+			highlight.FillColor = color
+			highlight.OutlineColor = color:Lerp(Color3.new(1, 1, 1), 0.45)
+			local pulse = (math.sin(t * 3) + 1) * 0.5
+			highlight.FillTransparency = 0.78 - pulse * 0.12
+			highlight.OutlineTransparency = 0.18 - pulse * 0.14
+			if player.Character and highlight.Parent ~= player.Character then highlight.Parent = player.Character end
+		end
+	end
+end)
+
+BtnESP.MouseButton1Click:Connect(function()
+	State.ESP = not State.ESP
+	BtnESP.Text = State.ESP and "ESP: ON ✓" or "ESP: OFF"
+	BtnESP.BackgroundColor3 = State.ESP and CONFIG.Colors.Success or CONFIG.Colors.Background
+	UpdateESPAndHighlights()
+	PlaySound(CONFIG.Sounds.Click, 0.2)
+end)
+
+BtnHighlight.MouseButton1Click:Connect(function()
+	State.Highlight = not State.Highlight
+	BtnHighlight.Text = State.Highlight and "Glow: ON ✓ " or "Glow: OFF"
+	BtnHighlight.BackgroundColor3 = State.Highlight and CONFIG.Colors.Success or CONFIG.Colors.Background
+	UpdateESPAndHighlights()
+	PlaySound(CONFIG.Sounds.Click, 0.2)
+end)
+
+BtnView.MouseButton1Click:Connect(function()
+	if State.SelectedPlayer then
+		local char = State.SelectedPlayer.Character
+		if char then
+			local head = char:FindFirstChild("Head")
+			if head then
+				Workspace.CurrentCamera.CFrame = CFrame.new(head.Position + Vector3.new(0, 5, 10), head.Position)
+				PlaySound(CONFIG.Sounds.Success, 0.2)
+			end
+		end
+	end
+end)
+
+Players.PlayerAdded:Connect(function(player)
+	PlayerJoinTimes[player] = os.time()
+	task.delay(0.1, UpdatePlayerList)
+	if State.ESP then
+		CreateESPForPlayer(player)
+	end
+	if State.Highlight then
+		CreateHighlightForPlayer(player)
+	end
+end)
+
+-- SPY SYSTEM
+local SpyConnections = {}
+local CurrentOrbitAngle = 0
+
+StopSpying = function()
+	if not State.IsSpying then return end
+	State.IsSpying = false
+
+	-- Restore camera
+	local camera = Workspace.CurrentCamera
+	camera.CameraType = State.OriginalCamera.Type
+	camera.CameraSubject = State.OriginalCamera.Subject
+	camera.FieldOfView = State.OriginalCamera.FieldOfView
+	if State.OriginalCamera.CFrame then
+		local camTween = TweenService:Create(camera, CONFIG.Animations.Smooth, { CFrame = State.OriginalCamera.CFrame })
+		if camTween then camTween:Play() end
+	end
+
+	-- Cleanup
+	for _, conn in pairs(SpyConnections) do
+		conn:Disconnect()
+	end
+	SpyConnections = {}
+
+	SpyToggle.Text = "Start Spying"
+	SpyToggle.BackgroundColor3 = CONFIG.Colors.Success
+	SpyHud.Visible = false
+
+	PlaySound(CONFIG.Sounds.Click, 0.2)
+end
+
+local function StartSpying()
+	if State.IsSpying or not State.SelectedPlayer then return end
+
+	local player = State.SelectedPlayer
+	local camera = Workspace.CurrentCamera
+
+	-- Save original camera state
+	State.OriginalCamera.Type = camera.CameraType
+	State.OriginalCamera.Subject = camera.CameraSubject
+	State.OriginalCamera.CFrame = camera.CFrame
+	State.OriginalCamera.FieldOfView = camera.FieldOfView
+
+	State.IsSpying = true
+	SpyToggle.Text = "Stop Spying"
+	SpyToggle.BackgroundColor3 = CONFIG.Colors.Danger
+
+	HudTarget.Text = "Target: " .. player.DisplayName
+	HudMode.Text = "Mode: " .. (State.SpyMode:gsub("(%l)(%u)", "%1 %2"))
+	HudFov.Text = "FOV: " .. tostring(State.SpyFov)
+	SpyHud.Visible = State.SpyOverlayEnabled
+
+	PlaySound(CONFIG.Sounds.Success, 0.3)
+
+	local function GetTargetSubject()
+		local char = player.Character
+		if char then
+			return char:FindFirstChildOfClass("Humanoid") or char:FindFirstChild("HumanoidRootPart")
+		end
+		return nil
+	end
+
+	-- Apply FOV
+	camera.FieldOfView = State.SpyFov
+
+	if State.SpyMode == "Follow" then
+		-- This properly follows the target without snapping back to local player
+		camera.CameraType = Enum.CameraType.Custom
+		local subject = GetTargetSubject()
+		if subject then
+			camera.CameraSubject = subject
+		end
+
+		-- Auto-reconnect on respawn
+		table.insert(SpyConnections, player.CharacterAdded:Connect(function(char)
+			if State.IsSpying and State.SpyMode == "Follow" then
+				task.wait(0.5)
+				local humanoid = char:WaitForChild("Humanoid", 3)
+				if humanoid then
+					camera.CameraSubject = humanoid
+				end
+			end
+		end))
+
+		-- Keep updating camera subject in case it gets reset
+		table.insert(SpyConnections, RunService.Heartbeat:Connect(function()
+			if not State.IsSpying or State.SpyMode ~= "Follow" then return end
+			if camera.CameraSubject ~= GetTargetSubject() then
+				local subject = GetTargetSubject()
+				if subject then
+					camera.CameraSubject = subject
+				end
+			end
+		end))
+
+	elseif State.SpyMode == "Orbit" then
+		camera.CameraType = Enum.CameraType.Scriptable
+		CurrentOrbitAngle = 0
+
+		table.insert(SpyConnections, RunService.RenderStepped:Connect(function(dt)
+			if not State.IsSpying or State.SpyMode ~= "Orbit" then return end
+
+			local char = player.Character
+			local root = char and char:FindFirstChild("HumanoidRootPart")
+			if not root then return end
+
+			CurrentOrbitAngle += dt * 0.5
+			local offset = Vector3.new(
+				math.sin(CurrentOrbitAngle) * State.SpyOrbitDistance,
+				math.sin(CurrentOrbitAngle * 0.5) * 5 + 8,
+				math.cos(CurrentOrbitAngle) * State.SpyOrbitDistance
+			)
+
+			local targetPos = root.Position + offset
+			camera.CFrame = CFrame.new(targetPos, root.Position)
+		end))
+
+	elseif State.SpyMode == "FirstPerson" then
+		camera.CameraType = Enum.CameraType.Scriptable
+
+		table.insert(SpyConnections, RunService.RenderStepped:Connect(function()
+			if not State.IsSpying or State.SpyMode ~= "FirstPerson" then return end
+
+			local char = player.Character
+			local head = char and char:FindFirstChild("Head")
+			if not head then return end
+
+			camera.CFrame = head.CFrame
+		end))
+
+	elseif State.SpyMode == "Freecam" then
+		camera.CameraType = Enum.CameraType.Scriptable
+
+		local targetCFrame = camera.CFrame
+		table.insert(SpyConnections, RunService.RenderStepped:Connect(function()
+			if not State.IsSpying or State.SpyMode ~= "Freecam" then return end
+
+			local char = player.Character
+			local root = char and char:FindFirstChild("HumanoidRootPart")
+			if not root then return end
+
+			local desiredPos = root.Position + Vector3.new(0, 15, State.SpyOrbitDistance)
+			targetCFrame = targetCFrame:Lerp(CFrame.new(desiredPos, root.Position), 0.05)
+			camera.CFrame = targetCFrame
+		end))
+	end
+end
+
+SpyToggle.MouseButton1Click:Connect(function()
+	if State.IsSpying then
+		StopSpying()
+	else
+		StartSpying()
+	end
+end)
+
+HudStop.MouseButton1Click:Connect(StopSpying)
+
+-- SPY SYSTEM DROPDOWN
+local SpyModes = {"Follow", "Orbit", "FirstPerson", "Freecam"}
+local ModeIndex = 1
+
+SpyModeDropdown.MouseButton1Click:Connect(function()
+	ModeIndex = ModeIndex % #SpyModes + 1
+	State.SpyMode = SpyModes[ModeIndex]
+	SpyModeDropdown.Text = (State.SpyMode:gsub("(%l)(%u)", "%1 %2"))
+	HudMode.Text = "Mode: " .. (State.SpyMode:gsub("(%l)(%u)", "%1 %2"))
+
+	if State.IsSpying then
+		StopSpying()
+		task.wait(0.1)
+		StartSpying()
+	end
+	PlaySound(CONFIG.Sounds.Click, 0.2)
+end)
+
+-- ORBIT SLIDER
+local sliderDragging = false
+
+OrbitSlider.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		sliderDragging = true
+	end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		sliderDragging = false
+	end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+	if sliderDragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+		local sliderPos = OrbitSlider.AbsolutePosition.X
+		local sliderWidth = OrbitSlider.AbsoluteSize.X
+		local relativeX = math.clamp((input.Position.X - sliderPos) / sliderWidth, 0, 1)
+
+		State.SpyOrbitDistance = math.floor(5 + relativeX * 45)
+		OrbitValue.Text = tostring(State.SpyOrbitDistance)
+		OrbitFill.Size = UDim2.new(relativeX, 0, 1, 0)
+		OrbitKnob.Position = UDim2.new(relativeX, -8, 0.5, -8)
+	end
+end)
+
+-- FOV
+State.FovDragging = false
+
+FovSlider.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		State.FovDragging = true
+	end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		State.FovDragging = false
+	end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+	if State.FovDragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+		local sliderPos = FovSlider.AbsolutePosition.X
+		local sliderWidth = FovSlider.AbsoluteSize.X
+		local relativeX = math.clamp((input.Position.X - sliderPos) / sliderWidth, 0, 1)
+
+		State.SpyFov = math.floor(30 + relativeX * 90)
+		FovLabel.Text = "FOV: " .. tostring(State.SpyFov)
+		FovFill.Size = UDim2.new(relativeX, 0, 1, 0)
+		FovKnob.Position = UDim2.new(relativeX, -6, 0.5, -6)
+
+		if State.IsSpying then
+			Workspace.CurrentCamera.FieldOfView = State.SpyFov
+			HudFov.Text = "FOV: " .. tostring(State.SpyFov)
+		end
+	end
+end)
+
+-- OVERLAY TOGGLE
+SpyOverlay.MouseButton1Click:Connect(function()
+	State.SpyOverlayEnabled = not State.SpyOverlayEnabled
+	SpyOverlay.Text = State.SpyOverlayEnabled and "Info Overlay: ON" or "Info Overlay: OFF"
+	SpyOverlay.TextColor3 = State.SpyOverlayEnabled and CONFIG.Colors.Success or CONFIG.Colors.TextSecondary
+
+	if State.IsSpying then
+		SpyHud.Visible = State.SpyOverlayEnabled
+	end
+	PlaySound(CONFIG.Sounds.Click, 0.2)
+end)
+
+-- EXIT KEY
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+	if not gameProcessed and input.KeyCode == Enum.KeyCode.Q and State.IsSpying then
+		StopSpying()
+	end
+end)
+
+-- TELEPORT SYSTEM
+local FollowConnection = nil
+
+StopFollowing = function()
+	if FollowConnection then
+		FollowConnection:Disconnect()
+		FollowConnection = nil
+	end
+	State.FollowPlayer = false
+	FollowToggle.Text = "Follow: OFF"
+	FollowToggle.BackgroundColor3 = CONFIG.Colors.SurfaceHover
+	FollowToggle.TextColor3 = CONFIG.Colors.TextSecondary
+end
+
+local function TeleportToPlayer(mode)
+	if not State.SelectedPlayer then return end
+
+	local targetPlayer = State.SelectedPlayer
+	local myChar = LocalPlayer.Character
+	local targetChar = targetPlayer.Character
+
+	if not myChar then
+		Notify("Teleport Failed", "Your character doesn't exist!")
+		return
+	end
+
+	local myRoot = myChar:FindFirstChild("HumanoidRootPart")
+	if not myRoot then
+		Notify("Teleport Failed", "HumanoidRootPart not found!")
+		return
+	end
+
+	local function GetTargetPosition()
+		local char = targetPlayer.Character
+		if not char then return nil end
+
+		local root = char:FindFirstChild("HumanoidRootPart")
+		if root then return root end
+
+		local torso = char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso")
+		if torso then return torso end
+
+		return char:FindFirstChild("Humanoid") and char.Humanoid.RootPart
+	end
+
+	local targetPart = GetTargetPosition()
+	if not targetPart then
+		Notify("Teleport Failed", "Target character not found!")
+		return
+	end
+
+	local targetCFrame
+	local offset = Vector3.new(0, 0, 0)
+
+	if mode == "ToPlayer" then
+		offset = Vector3.new(0, 3, 0)
+		targetCFrame = targetPart.CFrame + offset
+	elseif mode == "Behind" then
+		offset = -targetPart.CFrame.LookVector * 5 + Vector3.new(0, 0, 0)
+		targetCFrame = CFrame.new(targetPart.Position + offset, targetPart.Position)
+	elseif mode == "Front" then
+		offset = targetPart.CFrame.LookVector * 5 + Vector3.new(0, 0, 0)
+		targetCFrame = CFrame.new(targetPart.Position + offset, targetPart.Position + targetPart.CFrame.LookVector * 10)
+	elseif mode == "Above" then
+		offset = Vector3.new(0, 8, 0)
+		targetCFrame = targetPart.CFrame + offset
+	elseif mode == "Below" then
+		offset = Vector3.new(0, -5, 0)
+		targetCFrame = targetPart.CFrame + offset
+	elseif mode == "Smart" then
+		local basePos = targetPart.Position
+		local bestPos = basePos + Vector3.new(0, 5, 5)
+		local bestDist = math.huge
+
+		for x = -10, 10, 5 do
+			for z = -10, 10, 5 do
+				local testPos = basePos + Vector3.new(x, 5, z)
+				local rayOrigin = testPos + Vector3.new(0, 50, 0)
+				local rayDirection = Vector3.new(0, -100, 0)
+				local raycastParams = RaycastParams.new()
+				raycastParams.FilterDescendantsInstances = {myChar, targetChar}
+				raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+
+				local result = Workspace:Raycast(rayOrigin, rayDirection, raycastParams)
+				if result then
+					local groundPos = result.Position + Vector3.new(0, 3, 0)
+					local dist = (groundPos - basePos).Magnitude
+					if dist < bestDist and dist > 3 then
+						bestDist = dist
+						bestPos = groundPos
+					end
+				end
+			end
+		end
+		targetCFrame = CFrame.new(bestPos, basePos)
+	end
+
+	if State.TeleportTween then
+		local tweenInfo = TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+		local tween = TweenService:Create(myRoot, tweenInfo, {CFrame = targetCFrame})
+		tween:Play()
+		PlaySound(CONFIG.Sounds.Success, 0.2)
+	else
+		myRoot.CFrame = targetCFrame
+		PlaySound(CONFIG.Sounds.Click, 0.2)
+	end
+
+	Notify("Teleported", string.format("%s to %s", mode, targetPlayer.DisplayName))
+end
+
+BtnTeleport.MouseButton1Click:Connect(function() TeleportToPlayer("ToPlayer") end)
+BtnBehind.MouseButton1Click:Connect(function() TeleportToPlayer("Behind") end)
+BtnFront.MouseButton1Click:Connect(function() TeleportToPlayer("Front") end)
+BtnAbove.MouseButton1Click:Connect(function() TeleportToPlayer("Above") end)
+BtnBelow.MouseButton1Click:Connect(function() TeleportToPlayer("Below") end)
+BtnSmart.MouseButton1Click:Connect(function() TeleportToPlayer("Smart") end)
+
+-- TWEEN TOGGLE
+TweenToggle.MouseButton1Click:Connect(function()
+	State.TeleportTween = not State.TeleportTween
+	TweenToggle.Text = State.TeleportTween and "Smooth Tween ✓" or "  Instant ✓"
+	TweenToggle.BackgroundColor3 = State.TeleportTween and CONFIG.Colors.Accent or CONFIG.Colors.SurfaceHover
+	PlaySound(CONFIG.Sounds.Click, 0.2)
+end)
+
+-- FOLLOW TOGGLE
+FollowToggle.MouseButton1Click:Connect(function()
+	if State.FollowPlayer then
+		StopFollowing()
+	else
+		State.FollowPlayer = true
+		FollowToggle.Text = "Follow: ON"
+		FollowToggle.BackgroundColor3 = CONFIG.Colors.Success
+		FollowToggle.TextColor3 = CONFIG.Colors.TextPrimary
+
+		FollowConnection = RunService.Heartbeat:Connect(function()
+			if not State.FollowPlayer or not State.SelectedPlayer then return end
+
+			local myChar = LocalPlayer.Character
+			local targetChar = State.SelectedPlayer.Character
+			if not myChar or not targetChar then return end
+
+			local myRoot = myChar:FindFirstChild("HumanoidRootPart")
+			local targetRoot = targetChar:FindFirstChild("HumanoidRootPart")
+			if not myRoot or not targetRoot then return end
+
+			local distance = (myRoot.Position - targetRoot.Position).Magnitude
+			if distance > 10 then
+				local direction = (targetRoot.Position - myRoot.Position).Unit
+				local targetPos = targetRoot.Position - direction * 5
+				myRoot.CFrame = CFrame.new(targetPos, targetRoot.Position)
+			end
+		end)
+
+		PlaySound(CONFIG.Sounds.Success, 0.2)
+	end
+end)
+
+-- SERVER HOPPER
+local function ServerHop(preferredSize)
+	local placeId = game.PlaceId
+	local jobId = game.JobId
+
+	ServerStatus.Text = "Fetching servers..."
+	ServerStatus.TextColor3 = CONFIG.Colors.Warning
+
+	local success, result = pcall(function()
+		local url = string.format("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100", placeId)
+		local response = game:HttpGet(url)
+		local data = HttpService:JSONDecode(response)
+		return data
+	end)
+
+	if not success or not result or not result.data then
+		ServerStatus.Text = "Failed to fetch servers"
+		ServerStatus.TextColor3 = CONFIG.Colors.Danger
+		Notify("Server Hop Failed", "Could not fetch server list")
+		return
+	end
+
+	local servers = result.data
+	local targetServer = nil
+
+	if preferredSize == "small" then
+		-- Find smallest server with players
+		local smallestSize = math.huge
+		for _, server in pairs(servers) do
+			if server.id ~= jobId and server.playing > 0 and server.playing < smallestSize then
+				smallestSize = server.playing
+				targetServer = server
+			end
+		end
+	elseif preferredSize == "random" then
+		-- Pick random server
+		local validServers = {}
+		for _, server in pairs(servers) do
+			if server.id ~= jobId and server.playing > 0 then
+				table.insert(validServers, server)
+			end
+		end
+		if #validServers > 0 then
+			targetServer = validServers[math.random(1, #validServers)]
+		end
+	end
+
+	if targetServer then
+		ServerStatus.Text = "Teleporting..."
+		ServerStatus.TextColor3 = CONFIG.Colors.Success
+		PlaySound(CONFIG.Sounds.Success, 0.3)
+		Notify("Server Hopping", string.format("Joining server with %d players...", targetServer.playing))
+		TeleportService:TeleportToPlaceInstance(placeId, targetServer.id, LocalPlayer)
+	else
+		ServerStatus.Text = "No servers found"
+		ServerStatus.TextColor3 = CONFIG.Colors.Danger
+		Notify("Server Hop Failed", "No suitable servers found")
+	end
+end
+
+BtnSmallServer.MouseButton1Click:Connect(function()
+	ServerHop("small")
+end)
+
+BtnRandomServer.MouseButton1Click:Connect(function()
+	ServerHop("random")
+end)
+
+BtnRejoin.MouseButton1Click:Connect(function()
+	ServerStatus.Text = "Rejoining..."
+	ServerStatus.TextColor3 = CONFIG.Colors.Warning
+	PlaySound(CONFIG.Sounds.Success, 0.3)
+	pcall(function()
+		TeleportService:Teleport(game.PlaceId, LocalPlayer)
+	end)
+end)
+
+-- WINDOW CONTROLS
+local originalSize = MainFrame.Size
+local originalPos = MainFrame.Position
+local minimizedSize = UDim2.new(0, 180, 0, 52)
+local minimizedPos = UDim2.new(1, -190, 0, 10)
+
+MinimizeButton.MouseButton1Click:Connect(function()
+	State.IsMinimized = not State.IsMinimized
+
+	if State.IsMinimized then
+		Tween(MainFrame, { Size = minimizedSize, Position = minimizedPos }, CONFIG.Animations.Smooth)
+		SearchContainer.Visible = false
+		ListContainer.Visible = false
+		InfoBar.Visible = false
+		MinimizeIcon.Text = "+"
+		TitleLabel.Text = "P.M."
+	else
+		local restoreTween = Tween(MainFrame, { Size = originalSize, Position = originalPos }, CONFIG.Animations.Smooth)
+		if restoreTween then
+			restoreTween.Completed:Connect(function()
+				SearchContainer.Visible = true
+				ListContainer.Visible = true
+				InfoBar.Visible = true
+			end)
+		else
+			SearchContainer.Visible = true
+			ListContainer.Visible = true
+			InfoBar.Visible = true
+		end
+		MinimizeIcon.Text = "−"
+		TitleLabel.Text = "PLAYER MONITOR"
+	end
+	PlaySound(CONFIG.Sounds.Click, 0.2)
+end)
+
+-- Always clean up ESP/glow if the GUI is destroyed externally (executor rerun, GUI delete, etc.)
+ScreenGui.Destroying:Connect(function()
+	pcall(ClearESP)
+	pcall(ClearHighlights)
+	State.ESP = false
+	State.Highlight = false
+end)
+
+CloseButton.MouseButton1Click:Connect(function()
+	PlaySound(CONFIG.Sounds.Click, 0.2)
+
+	-- Cleanup
+	StopSpying()
+	StopFollowing()
+	ClearESP()
+	ClearHighlights()
+
+	for _, conn in pairs(State.Connections) do
+		conn:Disconnect()
+	end
+	State.Connections = {}
+
+	local mainTween = Tween(MainFrame, { Size = UDim2.new(0, 0, 0, 0), Position = UDim2.new(0.5, 0, 0.5, 0) }, CONFIG.Animations.Smooth)
+	local actionTween = Tween(ActionPanel, { Size = UDim2.new(0, 0, 0, 0), Position = UDim2.new(0.5, 0, 0.5, 0) }, CONFIG.Animations.Smooth)
+
+	if mainTween then
+		mainTween.Completed:Connect(function()
+			ScreenGui:Destroy()
+		end)
+	else
+		ScreenGui:Destroy()
+	end
+end)
+
+-- AUTO REFRESH
+State.AutoRefreshRunning = false
+
+function State:StartAutoRefresh()
+	if self.AutoRefreshRunning then return end
+	self.AutoRefreshRunning = true
+	task.spawn(function()
+		while self.AutoRefresh and MainFrame and MainFrame.Parent do
+			UpdatePlayerList()
+			task.wait(3)
+		end
+		self.AutoRefreshRunning = false
+	end)
+end
+
+function State:StopAutoRefresh()
+	self.AutoRefresh = false
+end
+
+AutoRefreshBtn.MouseButton1Click:Connect(function()
+	State.AutoRefresh = not State.AutoRefresh
+	AutoRefreshBtn.BackgroundColor3 = State.AutoRefresh and CONFIG.Colors.Success or CONFIG.Colors.Danger
+	if State.AutoRefresh then
+		State:StartAutoRefresh()
+	end
+	PlaySound(CONFIG.Sounds.Click, 0.2)
+end)
+
+-- INITIALIZATION
+task.spawn(function()
+Players.PlayerAdded:Connect(function()
+	task.delay(0.1, UpdatePlayerList)
+end)
+
+Players.PlayerRemoving:Connect(function(player)
+	if State.ButtonCache[player] then
+		State.ButtonCache[player]:Destroy()
+		State.ButtonCache[player] = nil
+	end
+	if State.SelectedPlayer == player then
+		State.SelectedPlayer = nil
+		HideActionPanel()
+		StopSpying()
+		StopFollowing()
+	end
+	if State.ESPObjects[player] then
+		pcall(function() State.ESPObjects[player]:Destroy() end)
+		State.ESPObjects[player] = nil
+	end
+	if State.HighlightObjects[player] then
+		pcall(function() State.HighlightObjects[player]:Destroy() end)
+		State.HighlightObjects[player] = nil
+	end
+	PlayerJoinTimes[player] = nil
+	task.delay(0.1, UpdatePlayerList)
+end)
+
+-- INITIAL PLAYERS
+UpdatePlayerList()
+
+-- JOIN TIMES
+for _, p in pairs(Players:GetPlayers()) do
+	PlayerJoinTimes[p] = os.time()
+end
+
+-- START REFRESH
+if State.AutoRefresh then
+	State:StartAutoRefresh()
+end
+
+-- WELCOME
+task.delay(1, function()
+	Notify(
+		"Player Monitor v3.3 Loaded",
+		"Auto-refresh ON. 2 new tabs added: World + Diagnostics."
+	)
+
+	task.wait(1)
+
+	Notify(
+		"Player Monitor",
+		"Let me know on what features to add the GUI. Discord: xxmengi"
+	)
+end)
+
+print("Player Monitor v3.3 initialized successfully!")
+end)
+end)
